@@ -1,8 +1,10 @@
-import os
-import csv
 import argparse
+import csv
+import os
 import re
+
 import yaml
+
 
 def read_config(config_file):
     """
@@ -14,9 +16,10 @@ def read_config(config_file):
     Returns:
         dict: The configuration data as a dictionary.
     """
-    with open(config_file, 'r') as file:
+    with open(config_file, "r") as file:
         config = yaml.safe_load(file)
     return config
+
 
 def extract_account_name(filename):
     """
@@ -31,12 +34,13 @@ def extract_account_name(filename):
     Returns:
         str: The extracted account name.
     """
-    pattern = r'monthly-statement-transactions-(\w+)-\d{4}-\d{2}-\d{2}.csv'
+    pattern = r"monthly-statement-transactions-(\w+)-\d{4}-\d{2}-\d{2}.csv"
     match = re.search(pattern, filename)
     if match:
         return match.group(1)
     else:
         return None
+
 
 def extract_option_info(description):
     """
@@ -63,17 +67,17 @@ def extract_option_info(description):
     if not description or not isinstance(description, str):
         return None, None, None
 
-    colon_index = description.find(':')
+    colon_index = description.find(":")
     if colon_index == -1:
         return None, None, None
 
     option_name = description[:colon_index].strip()
-    after_colon = description[colon_index + 1:]
+    after_colon = description[colon_index + 1 :]
 
-    contracts_match = re.search(r'(\d+)\s+contract', after_colon)
+    contracts_match = re.search(r"(\d+)\s+contract", after_colon)
     contracts = int(contracts_match.group(1)) if contracts_match else None
 
-    fee_match = re.search(r'Fee:\s*\$([\d.]+)', after_colon)
+    fee_match = re.search(r"Fee:\s*\$([\d.]+)", after_colon)
     fee = float(fee_match.group(1)) if fee_match else None
 
     return option_name, contracts, fee
@@ -104,16 +108,17 @@ def extract_symbol(description, currency):
             - Symbol is always returned in uppercase
             - Returns None if symbol extraction fails
     """
-    dash_index = description.find('-')
+    dash_index = description.find("-")
     if dash_index == -1:
         return None
     else:
         symbol = description[:dash_index].strip().upper()
         CDR_SYMBOLS = ["TSLA", "DIS", "NVDA", "AAPL"]
         if symbol in CDR_SYMBOLS and currency == "CAD":
-            return f'{symbol}-QH'
+            return f"{symbol}-QH"
         else:
-            return f'{symbol}-CT'
+            return f"{symbol}-CT"
+
 
 def extract_unit(input_string):
     """
@@ -137,12 +142,13 @@ def extract_unit(input_string):
     Note:
         Expected format is '{SYMBOL} - {NUMBER} shares'
     """
-    pattern = r'(\d+\.\d+)\s+shares'
+    pattern = r"(\d+\.\d+)\s+shares"
     match = re.search(pattern, input_string)
     if match:
         return float(match.group(1))
     else:
         return None
+
 
 def generate_qif_entry(row, target_currency):
     """
@@ -186,50 +192,51 @@ def generate_qif_entry(row, target_currency):
     Raises:
         ValueError: If transaction type is not recognized
     """
-    transaction_type = row['transaction']
-    total = abs(float(row['amount']))
-    currency = row['currency']
+    transaction_type = row["transaction"]
+    total = abs(float(row["amount"]))
+    currency = row["currency"]
 
     if currency != target_currency:
         return None
 
-    if transaction_type == 'BUY':
-        symbol = extract_symbol(row['description'], currency)
-        unit = extract_unit(row['description'])
+    if transaction_type == "BUY":
+        symbol = extract_symbol(row["description"], currency)
+        unit = extract_unit(row["description"])
         price = total / unit
         return f'D{row["date"]}\nNBuy\nY{symbol}\nI{price}\nQ{unit}\nT{total}\nO0.00\nCc\n^'
-    elif transaction_type == 'SELL':
-        symbol = extract_symbol(row['description'], currency)
-        unit = extract_unit(row['description'])
+    elif transaction_type == "SELL":
+        symbol = extract_symbol(row["description"], currency)
+        unit = extract_unit(row["description"])
         price = total / unit
         return f'D{row["date"]}\nNSell\nY{symbol}\nI{price}\nQ{unit}\nT{total}\nO0.00\nCc\n^'
-    elif transaction_type == 'BUYTOOPEN':
-        option_name, unit, fee = extract_option_info(row['description'])
+    elif transaction_type == "BUYTOOPEN":
+        option_name, unit, fee = extract_option_info(row["description"])
         option_total = total - fee
         price = option_total / unit
         return f'D{row["date"]}\nNBuy\nY{option_name}\nI{price}\nQ{unit}\nT{total}\nO{fee}\nCc\n^'
-    elif transaction_type == 'SELLTOCLOSE':
-        option_name, unit, fee = extract_option_info(row['description'])
+    elif transaction_type == "SELLTOCLOSE":
+        option_name, unit, fee = extract_option_info(row["description"])
         option_total = total + fee
         price = option_total / unit
         return f'D{row["date"]}\nNSell\nY{option_name}\nI{price}\nQ{unit}\nT{total}\nO{fee}\nCc\n^'
-    elif transaction_type == 'DIV':
-        symbol = extract_symbol(row['description'], currency)
+    elif transaction_type == "DIV":
+        symbol = extract_symbol(row["description"], currency)
         return f'D{row["date"]}\nNDiv\nY{symbol}\nT{total}\nO0.00\nCc\n^'
-    elif transaction_type == 'CONT':
+    elif transaction_type == "CONT":
         return f'D{row["date"]}\nNXIn\nT{total}\nO0.00\nCc\nPContribution\nM{row["description"]}\n^'
-    elif transaction_type == 'FPLINT': #Stock lending monthly interest payment
+    elif transaction_type == "FPLINT":  # Stock lending monthly interest payment
         return f'D{row["date"]}\nNXIn\nT{total}\nO0.00\nCc\nPInterest\nM{row["description"]}\n^'
-    elif transaction_type == 'NRT':
+    elif transaction_type == "NRT":
         return f'D{row["date"]}\nNXOut\nT{total}\nO0.00\nCc\nPUS Non-Resident Tax Withholding\nM{row["description"]}\n^'
-    elif transaction_type in ('TRFOUT', 'SPEND', 'E_TRFOUT', 'EFTOUT', 'AFT_OUT'):
+    elif transaction_type in ("TRFOUT", "SPEND", "E_TRFOUT", "EFTOUT", "AFT_OUT"):
         return f'D{row["date"]}\nT-{total}\nO0.00\nCc\nP{row["description"]}\n^'
-    elif transaction_type in ('CASHBACK', 'EFT', 'INT', 'TRFIN', 'TRFINTF', 'REFUND'):
+    elif transaction_type in ("CASHBACK", "EFT", "INT", "TRFIN", "TRFINTF", "REFUND"):
         return f'D{row["date"]}\nT{total}\nO0.00\nCc\nP{row["description"]}\n^'
-    elif transaction_type in ('RECALL', 'LOAN', 'STKDIS', 'STKREORG'):
+    elif transaction_type in ("RECALL", "LOAN", "STKDIS", "STKREORG"):
         return None
     else:
-        raise ValueError(f'Invalid transaction type: {transaction_type}')
+        raise ValueError(f"Invalid transaction type: {transaction_type}")
+
 
 def read_csv_files(input_folder):
     """
@@ -268,20 +275,23 @@ def read_csv_files(input_folder):
     transactions_by_account = {}
 
     for filename in os.listdir(input_folder):
-        if filename.endswith('.csv'):
+        if filename.endswith(".csv"):
             account_name = extract_account_name(filename)
-            for target_currency in ['USD', 'CAD']:
-                per_currency_account_name = f'{account_name}-{target_currency}'
+            for target_currency in ["USD", "CAD"]:
+                per_currency_account_name = f"{account_name}-{target_currency}"
                 transactions_by_account.setdefault(per_currency_account_name, [])
 
                 file_path = os.path.join(input_folder, filename)
-                with open(file_path, 'r') as csv_file:
+                with open(file_path, "r") as csv_file:
                     reader = csv.DictReader(csv_file)
                     for row in reader:
                         qif = generate_qif_entry(row, target_currency)
                         if qif:
-                            transactions_by_account[per_currency_account_name].append(qif)
+                            transactions_by_account[per_currency_account_name].append(
+                                qif
+                            )
     return transactions_by_account
+
 
 def export_qif_files(account_data, config_filename):
     """
@@ -350,51 +360,67 @@ def export_qif_files(account_data, config_filename):
             raise ValueError("Unknown account")
 
         account_config = config[account_name]
-        account_type = account_config['type']
+        account_type = account_config["type"]
 
         # For chequing accounts, validate currency mismatch
         if account_type == "Checking":
             # Extract currency suffix from account name (e.g., 'WK23MTV36CAD-CAD' -> 'CAD')
-            if '-' in account_name:
-                account_currency_suffix = account_name.split('-')[-1]
+            if "-" in account_name:
+                account_currency_suffix = account_name.split("-")[-1]
                 # Extract base account name (e.g., 'WK23MTV36CAD-CAD' -> 'WK23MTV36CAD')
-                base_account_name = account_name.rsplit('-', 1)[0]
+                base_account_name = account_name.rsplit("-", 1)[0]
 
                 # Determine expected currency from base account name
                 # If base account ends with 'CAD', expect CAD; if ends with 'USD', expect USD
-                if base_account_name.endswith('CAD'):
-                    expected_currency = 'CAD'
-                elif base_account_name.endswith('USD'):
-                    expected_currency = 'USD'
+                if base_account_name.endswith("CAD"):
+                    expected_currency = "CAD"
+                elif base_account_name.endswith("USD"):
+                    expected_currency = "USD"
                 else:
                     # Default to CAD if unclear
-                    expected_currency = 'CAD'
+                    expected_currency = "CAD"
 
                 # Check for currency mismatch
                 if account_currency_suffix != expected_currency:
-                    raise ValueError(f"Currency mismatch for chequing account '{account_name}': "
-                                   f"account suffix indicates '{account_currency_suffix}' but expected '{expected_currency}' "
-                                   f"based on account base name '{base_account_name}'")
+                    raise ValueError(
+                        f"Currency mismatch for chequing account '{account_name}': "
+                        f"account suffix indicates '{account_currency_suffix}' but expected '{expected_currency}' "
+                        f"based on account base name '{base_account_name}'"
+                    )
 
-            transactions.insert(0, '!Type:Bank')
+            transactions.insert(0, "!Type:Bank")
         else:
-            transactions.insert(0, '!Type:Invst')
+            transactions.insert(0, "!Type:Invst")
 
-        qif_content = '\n'.join(transactions) + '\n'
+        qif_content = "\n".join(transactions) + "\n"
 
         filename = f"output/{config[account_name]['nickname']}.qif"
-        with open(filename, 'w') as file:
+        with open(filename, "w") as file:
             file.write(qif_content)
         print(f"Exported {filename}")
 
+
 def main():
-    parser = argparse.ArgumentParser(description='WealthSimple CSV to QIF Conversion CLI App')
-    parser.add_argument('--input-folder', type=str, help='Path to the input folder containing CSV files, default to `input`', default='input')
-    parser.add_argument('--account-config', type=str, help='Path to the config for accounts, default to `accounts.yml`', default='accounts.yml')
+    parser = argparse.ArgumentParser(
+        description="WealthSimple CSV to QIF Conversion CLI App"
+    )
+    parser.add_argument(
+        "--input-folder",
+        type=str,
+        help="Path to the input folder containing CSV files, default to `input`",
+        default="input",
+    )
+    parser.add_argument(
+        "--account-config",
+        type=str,
+        help="Path to the config for accounts, default to `accounts.yml`",
+        default="accounts.yml",
+    )
     args = parser.parse_args()
 
     csv_data = read_csv_files(args.input_folder)
     export_qif_files(csv_data, args.account_config)
+
 
 if __name__ == "__main__":
     main()

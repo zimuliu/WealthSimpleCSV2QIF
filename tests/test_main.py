@@ -1,139 +1,149 @@
-import unittest
-import tempfile
 import os
-import yaml
 import shutil
+import tempfile
+import unittest
+from unittest.mock import MagicMock, mock_open, patch
 
-from unittest.mock import patch, mock_open, MagicMock
-from app.main import read_csv_files, extract_account_name, read_config, extract_option_info, extract_unit, extract_symbol, generate_qif_entry, export_qif_files
+import yaml
+
+from app.main import (export_qif_files, extract_account_name,
+                      extract_option_info, extract_symbol, extract_unit,
+                      generate_qif_entry, read_config, read_csv_files)
+
 
 class TestMain(unittest.TestCase):
     def test_extract_account_name_valid_format(self):
         """Test extract_account_name with valid filename formats"""
         # Test with standard account name format
-        filename = 'monthly-statement-transactions-HQ8KJW805CAD-2025-07-01.csv'
+        filename = "monthly-statement-transactions-HQ8KJW805CAD-2025-07-01.csv"
         result = extract_account_name(filename)
-        self.assertEqual(result, 'HQ8KJW805CAD')
+        self.assertEqual(result, "HQ8KJW805CAD")
 
         # Test with different account name
-        filename = 'monthly-statement-transactions-AB1234567USD-2024-12-31.csv'
+        filename = "monthly-statement-transactions-AB1234567USD-2024-12-31.csv"
         result = extract_account_name(filename)
-        self.assertEqual(result, 'AB1234567USD')
+        self.assertEqual(result, "AB1234567USD")
 
         # Test with another valid format
-        filename = 'monthly-statement-transactions-XY9876543CAD-2023-06-15.csv'
+        filename = "monthly-statement-transactions-XY9876543CAD-2023-06-15.csv"
         result = extract_account_name(filename)
-        self.assertEqual(result, 'XY9876543CAD')
+        self.assertEqual(result, "XY9876543CAD")
 
     def test_extract_account_name_different_dates(self):
         """Test extract_account_name with different date formats"""
         # Test with different months
-        filename = 'monthly-statement-transactions-TEST123456-2025-01-01.csv'
+        filename = "monthly-statement-transactions-TEST123456-2025-01-01.csv"
         result = extract_account_name(filename)
-        self.assertEqual(result, 'TEST123456')
+        self.assertEqual(result, "TEST123456")
 
         # Test with leap year date
-        filename = 'monthly-statement-transactions-LEAP987654-2024-02-29.csv'
+        filename = "monthly-statement-transactions-LEAP987654-2024-02-29.csv"
         result = extract_account_name(filename)
-        self.assertEqual(result, 'LEAP987654')
+        self.assertEqual(result, "LEAP987654")
 
         # Test with end of year date
-        filename = 'monthly-statement-transactions-YEAR123456-2023-12-31.csv'
+        filename = "monthly-statement-transactions-YEAR123456-2023-12-31.csv"
         result = extract_account_name(filename)
-        self.assertEqual(result, 'YEAR123456')
+        self.assertEqual(result, "YEAR123456")
 
     def test_extract_account_name_invalid_format(self):
         """Test extract_account_name with invalid filename formats"""
         # Test with wrong prefix
-        filename = 'daily-statement-transactions-HQ8KJW805CAD-2025-07-01.csv'
+        filename = "daily-statement-transactions-HQ8KJW805CAD-2025-07-01.csv"
         result = extract_account_name(filename)
         self.assertIsNone(result)
 
         # Test with missing date
-        filename = 'monthly-statement-transactions-HQ8KJW805CAD.csv'
+        filename = "monthly-statement-transactions-HQ8KJW805CAD.csv"
         result = extract_account_name(filename)
         self.assertIsNone(result)
 
         # Test with wrong file extension
-        filename = 'monthly-statement-transactions-HQ8KJW805CAD-2025-07-01.txt'
+        filename = "monthly-statement-transactions-HQ8KJW805CAD-2025-07-01.txt"
         result = extract_account_name(filename)
         self.assertIsNone(result)
 
         # Test with malformed date
-        filename = 'monthly-statement-transactions-HQ8KJW805CAD-25-07-01.csv'
+        filename = "monthly-statement-transactions-HQ8KJW805CAD-25-07-01.csv"
         result = extract_account_name(filename)
         self.assertIsNone(result)
 
         # Test with invalid date format (wrong separators)
-        filename = 'monthly-statement-transactions-HQ8KJW805CAD-2025/07/01.csv'
+        filename = "monthly-statement-transactions-HQ8KJW805CAD-2025/07/01.csv"
         result = extract_account_name(filename)
         self.assertIsNone(result)
 
     def test_extract_account_name_edge_cases(self):
         """Test extract_account_name with edge cases"""
         # Test with empty string
-        result = extract_account_name('')
+        result = extract_account_name("")
         self.assertIsNone(result)
 
         # Test with completely different filename
-        filename = 'some-other-file.csv'
+        filename = "some-other-file.csv"
         result = extract_account_name(filename)
         self.assertIsNone(result)
 
         # Test with partial match
-        filename = 'monthly-statement-transactions-'
+        filename = "monthly-statement-transactions-"
         result = extract_account_name(filename)
         self.assertIsNone(result)
 
     def test_extract_account_name_account_name_variations(self):
         """Test extract_account_name with different account name patterns"""
         # Test with numeric account name
-        filename = 'monthly-statement-transactions-1234567890-2025-07-01.csv'
+        filename = "monthly-statement-transactions-1234567890-2025-07-01.csv"
         result = extract_account_name(filename)
-        self.assertEqual(result, '1234567890')
+        self.assertEqual(result, "1234567890")
 
         # Test with mixed alphanumeric
-        filename = 'monthly-statement-transactions-ABC123DEF456-2025-07-01.csv'
+        filename = "monthly-statement-transactions-ABC123DEF456-2025-07-01.csv"
         result = extract_account_name(filename)
-        self.assertEqual(result, 'ABC123DEF456')
+        self.assertEqual(result, "ABC123DEF456")
 
         # Test with single character account name
-        filename = 'monthly-statement-transactions-A-2025-07-01.csv'
+        filename = "monthly-statement-transactions-A-2025-07-01.csv"
         result = extract_account_name(filename)
-        self.assertEqual(result, 'A')
+        self.assertEqual(result, "A")
 
     def test_extract_account_name_special_characters(self):
         """Test extract_account_name with special characters in account names"""
         # The regex pattern uses \w+ which only matches word characters (letters, digits, underscore)
         # Test with underscore (should work)
-        filename = 'monthly-statement-transactions-TEST_123_CAD-2025-07-01.csv'
+        filename = "monthly-statement-transactions-TEST_123_CAD-2025-07-01.csv"
         result = extract_account_name(filename)
-        self.assertEqual(result, 'TEST_123_CAD')
+        self.assertEqual(result, "TEST_123_CAD")
 
         # Test with hyphen in account name (should not work with current regex)
-        filename = 'monthly-statement-transactions-TEST-123-CAD-2025-07-01.csv'
+        filename = "monthly-statement-transactions-TEST-123-CAD-2025-07-01.csv"
         result = extract_account_name(filename)
         # This should return None because the regex stops at the first hyphen
         self.assertIsNone(result)
 
         # Test with space in account name (should not work)
-        filename = 'monthly-statement-transactions-TEST 123 CAD-2025-07-01.csv'
+        filename = "monthly-statement-transactions-TEST 123 CAD-2025-07-01.csv"
         result = extract_account_name(filename)
         self.assertIsNone(result)
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open, read_data='date,transaction,description,amount,currency\n2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD\n')
+    @patch("os.listdir")
+    @patch(
+        "builtins.open",
+        new_callable=mock_open,
+        read_data="date,transaction,description,amount,currency\n2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD\n",
+    )
     def test_read_csv_files(self, mock_open_file, mock_listdir):
-        mock_listdir.return_value = ['monthly-statement-transactions-TEST123456-2025-07-01.csv']
-        csv_data = read_csv_files('input_folder')
+        mock_listdir.return_value = [
+            "monthly-statement-transactions-TEST123456-2025-07-01.csv"
+        ]
+        csv_data = read_csv_files("input_folder")
         # Should have 2 accounts (TEST123456-USD and TEST123456-CAD)
         self.assertEqual(len(csv_data), 2)
         # Check that both currency accounts exist
-        self.assertIn('TEST123456-USD', csv_data)
-        self.assertIn('TEST123456-CAD', csv_data)
+        self.assertIn("TEST123456-USD", csv_data)
+        self.assertIn("TEST123456-CAD", csv_data)
         # USD account should have 1 transaction, CAD should be empty
-        self.assertEqual(len(csv_data['TEST123456-USD']), 1)
-        self.assertEqual(len(csv_data['TEST123456-CAD']), 0)
+        self.assertEqual(len(csv_data["TEST123456-USD"]), 1)
+        self.assertEqual(len(csv_data["TEST123456-CAD"]), 0)
 
     def test_extract_option_info_valid_descriptions(self):
         """Test extract_option_info with valid option descriptions"""
@@ -242,7 +252,9 @@ class TestMain(unittest.TestCase):
         self.assertEqual(fee, 1.50)
 
         # Test with missing fee information
-        description = "SPY 450.00 USD CALL 2025-07-25: Bought 2 contract (executed at 2025-07-23)"
+        description = (
+            "SPY 450.00 USD CALL 2025-07-25: Bought 2 contract (executed at 2025-07-23)"
+        )
         option_name, contracts, fee = extract_option_info(description)
         self.assertEqual(option_name, "SPY 450.00 USD CALL 2025-07-25")
         self.assertEqual(contracts, 2)
@@ -457,8 +469,9 @@ class TestMain(unittest.TestCase):
         # Test with missing dash
         description = "AAPL 10.0 shares"
         result = extract_unit(description)
-        self.assertEqual(result, 10.0)  # Should still work as regex looks for pattern anywhere
-
+        self.assertEqual(
+            result, 10.0
+        )  # Should still work as regex looks for pattern anywhere
 
         # Test with shares in different case
         description = "AAPL - 10.0 SHARES"
@@ -598,7 +611,9 @@ class TestMain(unittest.TestCase):
         self.assertEqual(result, "AAPL-CT")
 
         result = extract_symbol("tsla - 5.0 shares", "CAD")
-        self.assertEqual(result, "TSLA-QH")  # lowercase tsla becomes TSLA and matches CDR
+        self.assertEqual(
+            result, "TSLA-QH"
+        )  # lowercase tsla becomes TSLA and matches CDR
 
         result = extract_symbol("shop - 15.0 shares", "CAD")
         self.assertEqual(result, "SHOP-CT")
@@ -637,423 +652,425 @@ class TestMain(unittest.TestCase):
     def test_generate_qif_entry_buy_transaction_usd(self):
         """Test generate_qif_entry with BUY transaction in USD"""
         row = {
-            'date': '2025-07-15',
-            'transaction': 'BUY',
-            'description': 'AAPL - 10.0 shares',
-            'amount': '-1500.00',
-            'currency': 'USD'
+            "date": "2025-07-15",
+            "transaction": "BUY",
+            "description": "AAPL - 10.0 shares",
+            "amount": "-1500.00",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_buy_transaction_cad(self):
         """Test generate_qif_entry with BUY transaction in CAD"""
         row = {
-            'date': '2025-07-16',
-            'transaction': 'BUY',
-            'description': 'SHOP - 5.0 shares',
-            'amount': '-750.00',
-            'currency': 'CAD'
+            "date": "2025-07-16",
+            "transaction": "BUY",
+            "description": "SHOP - 5.0 shares",
+            "amount": "-750.00",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'CAD')
-        expected = 'D2025-07-16\nNBuy\nYSHOP-CT\nI150.0\nQ5.0\nT750.0\nO0.00\nCc\n^'
+        result = generate_qif_entry(row, "CAD")
+        expected = "D2025-07-16\nNBuy\nYSHOP-CT\nI150.0\nQ5.0\nT750.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_buy_cdr_symbol_cad(self):
         """Test generate_qif_entry with BUY transaction for CDR symbol in CAD"""
         row = {
-            'date': '2025-07-17',
-            'transaction': 'BUY',
-            'description': 'TSLA - 2.0 shares',
-            'amount': '-500.00',
-            'currency': 'CAD'
+            "date": "2025-07-17",
+            "transaction": "BUY",
+            "description": "TSLA - 2.0 shares",
+            "amount": "-500.00",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'CAD')
-        expected = 'D2025-07-17\nNBuy\nYTSLA-QH\nI250.0\nQ2.0\nT500.0\nO0.00\nCc\n^'
+        result = generate_qif_entry(row, "CAD")
+        expected = "D2025-07-17\nNBuy\nYTSLA-QH\nI250.0\nQ2.0\nT500.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_sell_transaction_usd(self):
         """Test generate_qif_entry with SELL transaction in USD"""
         row = {
-            'date': '2025-07-18',
-            'transaction': 'SELL',
-            'description': 'MSFT - 8.0 shares',
-            'amount': '2400.00',
-            'currency': 'USD'
+            "date": "2025-07-18",
+            "transaction": "SELL",
+            "description": "MSFT - 8.0 shares",
+            "amount": "2400.00",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-07-18\nNSell\nYMSFT-CT\nI300.0\nQ8.0\nT2400.0\nO0.00\nCc\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-07-18\nNSell\nYMSFT-CT\nI300.0\nQ8.0\nT2400.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_sell_transaction_cad(self):
         """Test generate_qif_entry with SELL transaction in CAD"""
         row = {
-            'date': '2025-07-19',
-            'transaction': 'SELL',
-            'description': 'RY - 15.0 shares',
-            'amount': '1800.00',
-            'currency': 'CAD'
+            "date": "2025-07-19",
+            "transaction": "SELL",
+            "description": "RY - 15.0 shares",
+            "amount": "1800.00",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'CAD')
-        expected = 'D2025-07-19\nNSell\nYRY-CT\nI120.0\nQ15.0\nT1800.0\nO0.00\nCc\n^'
+        result = generate_qif_entry(row, "CAD")
+        expected = "D2025-07-19\nNSell\nYRY-CT\nI120.0\nQ15.0\nT1800.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_buytoopen_options_usd(self):
         """Test generate_qif_entry with BUYTOOPEN options transaction in USD"""
         row = {
-            'date': '2025-07-23',
-            'transaction': 'BUYTOOPEN',
-            'description': 'SPY 450.00 USD CALL 2025-07-25: Bought 2 contract (executed at 2025-07-23), Fee: $1.50',
-            'amount': '-320.50',
-            'currency': 'USD'
+            "date": "2025-07-23",
+            "transaction": "BUYTOOPEN",
+            "description": "SPY 450.00 USD CALL 2025-07-25: Bought 2 contract (executed at 2025-07-23), Fee: $1.50",
+            "amount": "-320.50",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-07-23\nNBuy\nYSPY 450.00 USD CALL 2025-07-25\nI159.5\nQ2\nT320.5\nO1.5\nCc\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-07-23\nNBuy\nYSPY 450.00 USD CALL 2025-07-25\nI159.5\nQ2\nT320.5\nO1.5\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_selltoclose_options_usd(self):
         """Test generate_qif_entry with SELLTOCLOSE options transaction in USD"""
         row = {
-            'date': '2025-07-25',
-            'transaction': 'SELLTOCLOSE',
-            'description': 'AAPL 180.00 USD PUT 2025-07-30: Sold 1 contract (executed at 2025-07-25), Fee: $0.75',
-            'amount': '150.25',
-            'currency': 'USD'
+            "date": "2025-07-25",
+            "transaction": "SELLTOCLOSE",
+            "description": "AAPL 180.00 USD PUT 2025-07-30: Sold 1 contract (executed at 2025-07-25), Fee: $0.75",
+            "amount": "150.25",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-07-25\nNSell\nYAAPL 180.00 USD PUT 2025-07-30\nI151.0\nQ1\nT150.25\nO0.75\nCc\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-07-25\nNSell\nYAAPL 180.00 USD PUT 2025-07-30\nI151.0\nQ1\nT150.25\nO0.75\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_dividend_usd(self):
         """Test generate_qif_entry with DIV transaction in USD"""
         row = {
-            'date': '2025-07-20',
-            'transaction': 'DIV',
-            'description': 'AAPL - Dividend payment',
-            'amount': '25.50',
-            'currency': 'USD'
+            "date": "2025-07-20",
+            "transaction": "DIV",
+            "description": "AAPL - Dividend payment",
+            "amount": "25.50",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-07-20\nNDiv\nYAAPL-CT\nT25.5\nO0.00\nCc\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-07-20\nNDiv\nYAAPL-CT\nT25.5\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_dividend_cad(self):
         """Test generate_qif_entry with DIV transaction in CAD"""
         row = {
-            'date': '2025-07-21',
-            'transaction': 'DIV',
-            'description': 'TD - Dividend payment',
-            'amount': '15.75',
-            'currency': 'CAD'
+            "date": "2025-07-21",
+            "transaction": "DIV",
+            "description": "TD - Dividend payment",
+            "amount": "15.75",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'CAD')
-        expected = 'D2025-07-21\nNDiv\nYTD-CT\nT15.75\nO0.00\nCc\n^'
+        result = generate_qif_entry(row, "CAD")
+        expected = "D2025-07-21\nNDiv\nYTD-CT\nT15.75\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_contribution_cad(self):
         """Test generate_qif_entry with CONT transaction in CAD"""
         row = {
-            'date': '2025-07-16',
-            'transaction': 'CONT',
-            'description': 'Contribution (executed at 2025-07-16)',
-            'amount': '1000.0',
-            'currency': 'CAD'
+            "date": "2025-07-16",
+            "transaction": "CONT",
+            "description": "Contribution (executed at 2025-07-16)",
+            "amount": "1000.0",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'CAD')
-        expected = 'D2025-07-16\nNXIn\nT1000.0\nO0.00\nCc\nPContribution\nMContribution (executed at 2025-07-16)\n^'
+        result = generate_qif_entry(row, "CAD")
+        expected = "D2025-07-16\nNXIn\nT1000.0\nO0.00\nCc\nPContribution\nMContribution (executed at 2025-07-16)\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_contribution_usd(self):
         """Test generate_qif_entry with CONT transaction in USD"""
         row = {
-            'date': '2025-07-22',
-            'transaction': 'CONT',
-            'description': 'Monthly contribution',
-            'amount': '500.0',
-            'currency': 'USD'
+            "date": "2025-07-22",
+            "transaction": "CONT",
+            "description": "Monthly contribution",
+            "amount": "500.0",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-07-22\nNXIn\nT500.0\nO0.00\nCc\nPContribution\nMMonthly contribution\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-07-22\nNXIn\nT500.0\nO0.00\nCc\nPContribution\nMMonthly contribution\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_fplint_usd(self):
         """Test generate_qif_entry with FPLINT (stock lending interest) transaction in USD"""
         row = {
-            'date': '2025-07-30',
-            'transaction': 'FPLINT',
-            'description': 'Stock lending interest payment',
-            'amount': '12.50',
-            'currency': 'USD'
+            "date": "2025-07-30",
+            "transaction": "FPLINT",
+            "description": "Stock lending interest payment",
+            "amount": "12.50",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-07-30\nNXIn\nT12.5\nO0.00\nCc\nPInterest\nMStock lending interest payment\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-07-30\nNXIn\nT12.5\nO0.00\nCc\nPInterest\nMStock lending interest payment\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_nrt_usd(self):
         """Test generate_qif_entry with NRT (Non-Resident Tax) transaction in USD"""
         row = {
-            'date': '2025-07-31',
-            'transaction': 'NRT',
-            'description': 'US Non-Resident Tax Withholding',
-            'amount': '5.25',
-            'currency': 'USD'
+            "date": "2025-07-31",
+            "transaction": "NRT",
+            "description": "US Non-Resident Tax Withholding",
+            "amount": "5.25",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-07-31\nNXOut\nT5.25\nO0.00\nCc\nPUS Non-Resident Tax Withholding\nMUS Non-Resident Tax Withholding\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-07-31\nNXOut\nT5.25\nO0.00\nCc\nPUS Non-Resident Tax Withholding\nMUS Non-Resident Tax Withholding\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_trfout_transactions(self):
         """Test generate_qif_entry with various outgoing transfer transactions"""
         # Test TRFOUT
         row = {
-            'date': '2025-08-01',
-            'transaction': 'TRFOUT',
-            'description': 'Transfer to external account',
-            'amount': '200.00',
-            'currency': 'CAD'
+            "date": "2025-08-01",
+            "transaction": "TRFOUT",
+            "description": "Transfer to external account",
+            "amount": "200.00",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'CAD')
-        expected = 'D2025-08-01\nT-200.0\nO0.00\nCc\nPTransfer to external account\n^'
+        result = generate_qif_entry(row, "CAD")
+        expected = "D2025-08-01\nT-200.0\nO0.00\nCc\nPTransfer to external account\n^"
         self.assertEqual(result, expected)
 
         # Test SPEND
         row = {
-            'date': '2025-08-02',
-            'transaction': 'SPEND',
-            'description': 'Card purchase',
-            'amount': '50.00',
-            'currency': 'USD'
+            "date": "2025-08-02",
+            "transaction": "SPEND",
+            "description": "Card purchase",
+            "amount": "50.00",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-08-02\nT-50.0\nO0.00\nCc\nPCard purchase\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-08-02\nT-50.0\nO0.00\nCc\nPCard purchase\n^"
         self.assertEqual(result, expected)
 
         # Test E_TRFOUT
         row = {
-            'date': '2025-08-03',
-            'transaction': 'E_TRFOUT',
-            'description': 'Electronic transfer out',
-            'amount': '100.00',
-            'currency': 'CAD'
+            "date": "2025-08-03",
+            "transaction": "E_TRFOUT",
+            "description": "Electronic transfer out",
+            "amount": "100.00",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'CAD')
-        expected = 'D2025-08-03\nT-100.0\nO0.00\nCc\nPElectronic transfer out\n^'
+        result = generate_qif_entry(row, "CAD")
+        expected = "D2025-08-03\nT-100.0\nO0.00\nCc\nPElectronic transfer out\n^"
         self.assertEqual(result, expected)
 
         # Test EFTOUT
         row = {
-            'date': '2025-08-04',
-            'transaction': 'EFTOUT',
-            'description': 'EFT withdrawal',
-            'amount': '75.00',
-            'currency': 'USD'
+            "date": "2025-08-04",
+            "transaction": "EFTOUT",
+            "description": "EFT withdrawal",
+            "amount": "75.00",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-08-04\nT-75.0\nO0.00\nCc\nPEFT withdrawal\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-08-04\nT-75.0\nO0.00\nCc\nPEFT withdrawal\n^"
         self.assertEqual(result, expected)
 
         # Test AFT_OUT
         row = {
-            'date': '2025-08-05',
-            'transaction': 'AFT_OUT',
-            'description': 'Automated transfer out',
-            'amount': '125.00',
-            'currency': 'CAD'
+            "date": "2025-08-05",
+            "transaction": "AFT_OUT",
+            "description": "Automated transfer out",
+            "amount": "125.00",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'CAD')
-        expected = 'D2025-08-05\nT-125.0\nO0.00\nCc\nPAutomated transfer out\n^'
+        result = generate_qif_entry(row, "CAD")
+        expected = "D2025-08-05\nT-125.0\nO0.00\nCc\nPAutomated transfer out\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_incoming_transactions(self):
         """Test generate_qif_entry with various incoming transactions"""
         # Test CASHBACK
         row = {
-            'date': '2025-08-06',
-            'transaction': 'CASHBACK',
-            'description': 'Credit card cashback',
-            'amount': '15.00',
-            'currency': 'USD'
+            "date": "2025-08-06",
+            "transaction": "CASHBACK",
+            "description": "Credit card cashback",
+            "amount": "15.00",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-08-06\nT15.0\nO0.00\nCc\nPCredit card cashback\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-08-06\nT15.0\nO0.00\nCc\nPCredit card cashback\n^"
         self.assertEqual(result, expected)
 
         # Test EFT
         row = {
-            'date': '2025-08-07',
-            'transaction': 'EFT',
-            'description': 'Electronic funds transfer',
-            'amount': '300.00',
-            'currency': 'CAD'
+            "date": "2025-08-07",
+            "transaction": "EFT",
+            "description": "Electronic funds transfer",
+            "amount": "300.00",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'CAD')
-        expected = 'D2025-08-07\nT300.0\nO0.00\nCc\nPElectronic funds transfer\n^'
+        result = generate_qif_entry(row, "CAD")
+        expected = "D2025-08-07\nT300.0\nO0.00\nCc\nPElectronic funds transfer\n^"
         self.assertEqual(result, expected)
 
         # Test INT
         row = {
-            'date': '2025-08-08',
-            'transaction': 'INT',
-            'description': 'Interest payment',
-            'amount': '8.50',
-            'currency': 'USD'
+            "date": "2025-08-08",
+            "transaction": "INT",
+            "description": "Interest payment",
+            "amount": "8.50",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-08-08\nT8.5\nO0.00\nCc\nPInterest payment\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-08-08\nT8.5\nO0.00\nCc\nPInterest payment\n^"
         self.assertEqual(result, expected)
 
         # Test TRFIN
         row = {
-            'date': '2025-08-09',
-            'transaction': 'TRFIN',
-            'description': 'Transfer in from external',
-            'amount': '250.00',
-            'currency': 'CAD'
+            "date": "2025-08-09",
+            "transaction": "TRFIN",
+            "description": "Transfer in from external",
+            "amount": "250.00",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'CAD')
-        expected = 'D2025-08-09\nT250.0\nO0.00\nCc\nPTransfer in from external\n^'
+        result = generate_qif_entry(row, "CAD")
+        expected = "D2025-08-09\nT250.0\nO0.00\nCc\nPTransfer in from external\n^"
         self.assertEqual(result, expected)
 
         # Test TRFINTF
         row = {
-            'date': '2025-08-10',
-            'transaction': 'TRFINTF',
-            'description': 'Internal transfer fee',
-            'amount': '2.00',
-            'currency': 'USD'
+            "date": "2025-08-10",
+            "transaction": "TRFINTF",
+            "description": "Internal transfer fee",
+            "amount": "2.00",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-08-10\nT2.0\nO0.00\nCc\nPInternal transfer fee\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-08-10\nT2.0\nO0.00\nCc\nPInternal transfer fee\n^"
         self.assertEqual(result, expected)
 
         # Test REFUND
         row = {
-            'date': '2025-08-11',
-            'transaction': 'REFUND',
-            'description': 'Purchase refund',
-            'amount': '45.00',
-            'currency': 'CAD'
+            "date": "2025-08-11",
+            "transaction": "REFUND",
+            "description": "Purchase refund",
+            "amount": "45.00",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'CAD')
-        expected = 'D2025-08-11\nT45.0\nO0.00\nCc\nPPurchase refund\n^'
+        result = generate_qif_entry(row, "CAD")
+        expected = "D2025-08-11\nT45.0\nO0.00\nCc\nPPurchase refund\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_ignored_transactions(self):
         """Test generate_qif_entry with ignored transaction types"""
-        ignored_types = ['RECALL', 'LOAN', 'STKDIS', 'STKREORG']
+        ignored_types = ["RECALL", "LOAN", "STKDIS", "STKREORG"]
 
         for transaction_type in ignored_types:
             row = {
-                'date': '2025-08-12',
-                'transaction': transaction_type,
-                'description': f'{transaction_type} transaction',
-                'amount': '100.00',
-                'currency': 'USD'
+                "date": "2025-08-12",
+                "transaction": transaction_type,
+                "description": f"{transaction_type} transaction",
+                "amount": "100.00",
+                "currency": "USD",
             }
-            result = generate_qif_entry(row, 'USD')
-            self.assertIsNone(result, f"Transaction type {transaction_type} should return None")
+            result = generate_qif_entry(row, "USD")
+            self.assertIsNone(
+                result, f"Transaction type {transaction_type} should return None"
+            )
 
     def test_generate_qif_entry_currency_filtering(self):
         """Test generate_qif_entry currency filtering"""
         # USD transaction with CAD target - should return None
         row = {
-            'date': '2025-08-13',
-            'transaction': 'BUY',
-            'description': 'AAPL - 5.0 shares',
-            'amount': '-750.00',
-            'currency': 'USD'
+            "date": "2025-08-13",
+            "transaction": "BUY",
+            "description": "AAPL - 5.0 shares",
+            "amount": "-750.00",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'CAD')
+        result = generate_qif_entry(row, "CAD")
         self.assertIsNone(result)
 
         # CAD transaction with USD target - should return None
         row = {
-            'date': '2025-08-14',
-            'transaction': 'BUY',
-            'description': 'SHOP - 3.0 shares',
-            'amount': '-450.00',
-            'currency': 'CAD'
+            "date": "2025-08-14",
+            "transaction": "BUY",
+            "description": "SHOP - 3.0 shares",
+            "amount": "-450.00",
+            "currency": "CAD",
         }
-        result = generate_qif_entry(row, 'USD')
+        result = generate_qif_entry(row, "USD")
         self.assertIsNone(result)
 
         # Matching currencies should work
         row = {
-            'date': '2025-08-15',
-            'transaction': 'BUY',
-            'description': 'MSFT - 2.0 shares',
-            'amount': '-600.00',
-            'currency': 'USD'
+            "date": "2025-08-15",
+            "transaction": "BUY",
+            "description": "MSFT - 2.0 shares",
+            "amount": "-600.00",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
+        result = generate_qif_entry(row, "USD")
         self.assertIsNotNone(result)
 
     def test_generate_qif_entry_invalid_transaction_type(self):
         """Test generate_qif_entry with invalid transaction type"""
         row = {
-            'date': '2025-08-16',
-            'transaction': 'INVALID_TYPE',
-            'description': 'Unknown transaction',
-            'amount': '100.00',
-            'currency': 'USD'
+            "date": "2025-08-16",
+            "transaction": "INVALID_TYPE",
+            "description": "Unknown transaction",
+            "amount": "100.00",
+            "currency": "USD",
         }
 
         with self.assertRaises(ValueError) as context:
-            generate_qif_entry(row, 'USD')
+            generate_qif_entry(row, "USD")
 
-        self.assertIn('Invalid transaction type: INVALID_TYPE', str(context.exception))
+        self.assertIn("Invalid transaction type: INVALID_TYPE", str(context.exception))
 
     def test_generate_qif_entry_fractional_shares_and_amounts(self):
         """Test generate_qif_entry with fractional shares and amounts"""
         # Test fractional shares
         row = {
-            'date': '2025-08-17',
-            'transaction': 'BUY',
-            'description': 'GOOGL - 2.5 shares',
-            'amount': '-6250.75',
-            'currency': 'USD'
+            "date": "2025-08-17",
+            "transaction": "BUY",
+            "description": "GOOGL - 2.5 shares",
+            "amount": "-6250.75",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-08-17\nNBuy\nYGOOGL-CT\nI2500.3\nQ2.5\nT6250.75\nO0.00\nCc\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-08-17\nNBuy\nYGOOGL-CT\nI2500.3\nQ2.5\nT6250.75\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
         # Test fractional options contracts and fees
         row = {
-            'date': '2025-08-18',
-            'transaction': 'BUYTOOPEN',
-            'description': 'NVDA 800.00 USD CALL 2025-09-15: Bought 3 contract (executed at 2025-08-18), Fee: $2.25',
-            'amount': '-1502.25',
-            'currency': 'USD'
+            "date": "2025-08-18",
+            "transaction": "BUYTOOPEN",
+            "description": "NVDA 800.00 USD CALL 2025-09-15: Bought 3 contract (executed at 2025-08-18), Fee: $2.25",
+            "amount": "-1502.25",
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-08-18\nNBuy\nYNVDA 800.00 USD CALL 2025-09-15\nI500.0\nQ3\nT1502.25\nO2.25\nCc\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-08-18\nNBuy\nYNVDA 800.00 USD CALL 2025-09-15\nI500.0\nQ3\nT1502.25\nO2.25\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_negative_amounts_handling(self):
         """Test generate_qif_entry handles negative amounts correctly"""
         # BUY transactions typically have negative amounts in CSV
         row = {
-            'date': '2025-08-19',
-            'transaction': 'BUY',
-            'description': 'AMZN - 1.0 shares',
-            'amount': '-3500.00',  # Negative amount
-            'currency': 'USD'
+            "date": "2025-08-19",
+            "transaction": "BUY",
+            "description": "AMZN - 1.0 shares",
+            "amount": "-3500.00",  # Negative amount
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-08-19\nNBuy\nYAMZN-CT\nI3500.0\nQ1.0\nT3500.0\nO0.00\nCc\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-08-19\nNBuy\nYAMZN-CT\nI3500.0\nQ1.0\nT3500.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
         # SELL transactions typically have positive amounts in CSV
         row = {
-            'date': '2025-08-20',
-            'transaction': 'SELL',
-            'description': 'AMZN - 1.0 shares',
-            'amount': '3600.00',  # Positive amount
-            'currency': 'USD'
+            "date": "2025-08-20",
+            "transaction": "SELL",
+            "description": "AMZN - 1.0 shares",
+            "amount": "3600.00",  # Positive amount
+            "currency": "USD",
         }
-        result = generate_qif_entry(row, 'USD')
-        expected = 'D2025-08-20\nNSell\nYAMZN-CT\nI3600.0\nQ1.0\nT3600.0\nO0.00\nCc\n^'
+        result = generate_qif_entry(row, "USD")
+        expected = "D2025-08-20\nNSell\nYAMZN-CT\nI3600.0\nQ1.0\nT3600.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     # Tests for read_config function
@@ -1061,21 +1078,14 @@ class TestMain(unittest.TestCase):
         """Test read_config with valid YAML configuration file"""
         # Create a temporary YAML file with valid configuration matching actual format
         config_data = {
-            'H12345678CAD-CAD': {
-                'nickname': 'My-TFSA',
-                'type': 'Investment'
-            },
-            'WK23MTV36CAD-CAD': {
-                'nickname': 'My-Chequeing',
-                'type': 'Checking'
-            },
-            'WK5DRT238USD-USD': {
-                'nickname': 'My-USD-Saving',
-                'type': 'Checking'
-            }
+            "H12345678CAD-CAD": {"nickname": "My-TFSA", "type": "Investment"},
+            "WK23MTV36CAD-CAD": {"nickname": "My-Chequeing", "type": "Checking"},
+            "WK5DRT238USD-USD": {"nickname": "My-USD-Saving", "type": "Checking"},
         }
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as temp_file:
             yaml.dump(config_data, temp_file)
             temp_file_path = temp_file.name
 
@@ -1084,24 +1094,26 @@ class TestMain(unittest.TestCase):
             self.assertEqual(result, config_data)
 
             # Verify specific account configurations
-            self.assertIn('H12345678CAD-CAD', result)
-            self.assertEqual(result['H12345678CAD-CAD']['nickname'], 'My-TFSA')
-            self.assertEqual(result['H12345678CAD-CAD']['type'], 'Investment')
+            self.assertIn("H12345678CAD-CAD", result)
+            self.assertEqual(result["H12345678CAD-CAD"]["nickname"], "My-TFSA")
+            self.assertEqual(result["H12345678CAD-CAD"]["type"], "Investment")
 
-            self.assertIn('WK23MTV36CAD-CAD', result)
-            self.assertEqual(result['WK23MTV36CAD-CAD']['nickname'], 'My-Chequeing')
-            self.assertEqual(result['WK23MTV36CAD-CAD']['type'], 'Checking')
+            self.assertIn("WK23MTV36CAD-CAD", result)
+            self.assertEqual(result["WK23MTV36CAD-CAD"]["nickname"], "My-Chequeing")
+            self.assertEqual(result["WK23MTV36CAD-CAD"]["type"], "Checking")
 
-            self.assertIn('WK5DRT238USD-USD', result)
-            self.assertEqual(result['WK5DRT238USD-USD']['nickname'], 'My-USD-Saving')
-            self.assertEqual(result['WK5DRT238USD-USD']['type'], 'Checking')
+            self.assertIn("WK5DRT238USD-USD", result)
+            self.assertEqual(result["WK5DRT238USD-USD"]["nickname"], "My-USD-Saving")
+            self.assertEqual(result["WK5DRT238USD-USD"]["type"], "Checking")
         finally:
             os.unlink(temp_file_path)
 
     def test_read_config_empty_yaml_file(self):
         """Test read_config with empty YAML file"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
-            temp_file.write('')  # Empty file
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as temp_file:
+            temp_file.write("")  # Empty file
             temp_file_path = temp_file.name
 
         try:
@@ -1125,7 +1137,9 @@ WK23MTV36CAD-CAD:
   type: Checking
 """
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as temp_file:
             temp_file.write(yaml_content)
             temp_file_path = temp_file.name
 
@@ -1134,35 +1148,31 @@ WK23MTV36CAD-CAD:
 
             # Comments should be ignored, only data should be parsed
             self.assertEqual(len(result), 2)
-            self.assertIn('H12345678CAD-CAD', result)
-            self.assertIn('WK23MTV36CAD-CAD', result)
-            self.assertEqual(result['H12345678CAD-CAD']['nickname'], 'My-TFSA')
-            self.assertEqual(result['WK23MTV36CAD-CAD']['type'], 'Checking')
+            self.assertIn("H12345678CAD-CAD", result)
+            self.assertIn("WK23MTV36CAD-CAD", result)
+            self.assertEqual(result["H12345678CAD-CAD"]["nickname"], "My-TFSA")
+            self.assertEqual(result["WK23MTV36CAD-CAD"]["type"], "Checking")
         finally:
             os.unlink(temp_file_path)
 
     def test_read_config_multiple_account_types(self):
         """Test read_config with multiple Investment and Checking accounts"""
         config_data = {
-            'H16530307CAD-USD': {
-                'nickname': 'My-Unregistered-USD',
-                'type': 'Investment'
+            "H16530307CAD-USD": {
+                "nickname": "My-Unregistered-USD",
+                "type": "Investment",
             },
-            'H16530307CAD-CAD': {
-                'nickname': 'My-Unregistered-CAD',
-                'type': 'Investment'
+            "H16530307CAD-CAD": {
+                "nickname": "My-Unregistered-CAD",
+                "type": "Investment",
             },
-            'HQ8KJW805CAD-USD': {
-                'nickname': 'My-Option-Trading',
-                'type': 'Investment'
-            },
-            'WK23MTV36CAD-CAD': {
-                'nickname': 'My-Chequeing',
-                'type': 'Checking'
-            }
+            "HQ8KJW805CAD-USD": {"nickname": "My-Option-Trading", "type": "Investment"},
+            "WK23MTV36CAD-CAD": {"nickname": "My-Chequeing", "type": "Checking"},
         }
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as temp_file:
             yaml.dump(config_data, temp_file)
             temp_file_path = temp_file.name
 
@@ -1174,11 +1184,15 @@ WK23MTV36CAD-CAD:
             self.assertEqual(len(result), 4)
 
             # Check Investment accounts
-            investment_accounts = [k for k, v in result.items() if v['type'] == 'Investment']
+            investment_accounts = [
+                k for k, v in result.items() if v["type"] == "Investment"
+            ]
             self.assertEqual(len(investment_accounts), 3)
 
             # Check Checking accounts
-            checking_accounts = [k for k, v in result.items() if v['type'] == 'Checking']
+            checking_accounts = [
+                k for k, v in result.items() if v["type"] == "Checking"
+            ]
             self.assertEqual(len(checking_accounts), 1)
         finally:
             os.unlink(temp_file_path)
@@ -1186,17 +1200,19 @@ WK23MTV36CAD-CAD:
     def test_read_config_yaml_with_special_characters_in_nicknames(self):
         """Test read_config with YAML containing special characters in nicknames"""
         config_data = {
-            'SPECIAL-ACCOUNT-123': {
-                'nickname': 'My-Special_Account.Test',
-                'type': 'Investment'
+            "SPECIAL-ACCOUNT-123": {
+                "nickname": "My-Special_Account.Test",
+                "type": "Investment",
             },
-            'TEST-ACCOUNT-456': {
-                'nickname': 'Test-Account-With-Dashes',
-                'type': 'Checking'
-            }
+            "TEST-ACCOUNT-456": {
+                "nickname": "Test-Account-With-Dashes",
+                "type": "Checking",
+            },
         }
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False, encoding='utf-8') as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False, encoding="utf-8"
+        ) as temp_file:
             yaml.dump(config_data, temp_file, allow_unicode=True)
             temp_file_path = temp_file.name
 
@@ -1205,14 +1221,18 @@ WK23MTV36CAD-CAD:
             self.assertEqual(result, config_data)
 
             # Verify special characters in nicknames are preserved
-            self.assertEqual(result['SPECIAL-ACCOUNT-123']['nickname'], 'My-Special_Account.Test')
-            self.assertEqual(result['TEST-ACCOUNT-456']['nickname'], 'Test-Account-With-Dashes')
+            self.assertEqual(
+                result["SPECIAL-ACCOUNT-123"]["nickname"], "My-Special_Account.Test"
+            )
+            self.assertEqual(
+                result["TEST-ACCOUNT-456"]["nickname"], "Test-Account-With-Dashes"
+            )
         finally:
             os.unlink(temp_file_path)
 
     def test_read_config_file_not_found(self):
         """Test read_config with non-existent file"""
-        non_existent_file = '/path/that/does/not/exist/config.yml'
+        non_existent_file = "/path/that/does/not/exist/config.yml"
 
         with self.assertRaises(FileNotFoundError):
             read_config(non_existent_file)
@@ -1229,7 +1249,9 @@ WK23MTV36CAD-CAD
     nickname: My-Chequeing
 """
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as temp_file:
             temp_file.write(invalid_yaml_content)
             temp_file_path = temp_file.name
 
@@ -1243,13 +1265,15 @@ WK23MTV36CAD-CAD
         """Test read_config with YAML missing required fields"""
         # Test with missing 'type' field
         config_data = {
-            'INCOMPLETE-ACCOUNT': {
-                'nickname': 'Missing-Type-Field'
+            "INCOMPLETE-ACCOUNT": {
+                "nickname": "Missing-Type-Field"
                 # Missing 'type' field
             }
         }
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as temp_file:
             yaml.dump(config_data, temp_file)
             temp_file_path = temp_file.name
 
@@ -1257,20 +1281,22 @@ WK23MTV36CAD-CAD
             result = read_config(temp_file_path)
             # Function should still return the data, validation happens elsewhere
             self.assertEqual(result, config_data)
-            self.assertNotIn('type', result['INCOMPLETE-ACCOUNT'])
+            self.assertNotIn("type", result["INCOMPLETE-ACCOUNT"])
         finally:
             os.unlink(temp_file_path)
 
     def test_read_config_invalid_account_types(self):
         """Test read_config with invalid account types"""
         config_data = {
-            'INVALID-TYPE-ACCOUNT': {
-                'nickname': 'Invalid-Type-Test',
-                'type': 'InvalidType'  # Should be 'Investment' or 'Checking'
+            "INVALID-TYPE-ACCOUNT": {
+                "nickname": "Invalid-Type-Test",
+                "type": "InvalidType",  # Should be 'Investment' or 'Checking'
             }
         }
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as temp_file:
             yaml.dump(config_data, temp_file)
             temp_file_path = temp_file.name
 
@@ -1278,7 +1304,7 @@ WK23MTV36CAD-CAD
             result = read_config(temp_file_path)
             # Function should still return the data, validation happens elsewhere
             self.assertEqual(result, config_data)
-            self.assertEqual(result['INVALID-TYPE-ACCOUNT']['type'], 'InvalidType')
+            self.assertEqual(result["INVALID-TYPE-ACCOUNT"]["type"], "InvalidType")
         finally:
             os.unlink(temp_file_path)
 
@@ -1287,13 +1313,15 @@ WK23MTV36CAD-CAD
         # Generate a large configuration with many accounts
         config_data = {}
         for i in range(50):
-            account_id = f'ACCOUNT{i:03d}CAD-CAD'
+            account_id = f"ACCOUNT{i:03d}CAD-CAD"
             config_data[account_id] = {
-                'nickname': f'Test-Account-{i}',
-                'type': 'Investment' if i % 2 == 0 else 'Checking'
+                "nickname": f"Test-Account-{i}",
+                "type": "Investment" if i % 2 == 0 else "Checking",
             }
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as temp_file:
             yaml.dump(config_data, temp_file)
             temp_file_path = temp_file.name
 
@@ -1303,146 +1331,160 @@ WK23MTV36CAD-CAD
             self.assertEqual(len(result), 50)
 
             # Verify a few random entries
-            self.assertEqual(result['ACCOUNT000CAD-CAD']['nickname'], 'Test-Account-0')
-            self.assertEqual(result['ACCOUNT000CAD-CAD']['type'], 'Investment')
-            self.assertEqual(result['ACCOUNT001CAD-CAD']['type'], 'Checking')
+            self.assertEqual(result["ACCOUNT000CAD-CAD"]["nickname"], "Test-Account-0")
+            self.assertEqual(result["ACCOUNT000CAD-CAD"]["type"], "Investment")
+            self.assertEqual(result["ACCOUNT001CAD-CAD"]["type"], "Checking")
         finally:
             os.unlink(temp_file_path)
 
-    @patch('builtins.open', side_effect=IOError("Disk full"))
+    @patch("builtins.open", side_effect=IOError("Disk full"))
     def test_read_config_io_error(self, mock_open):
         """Test read_config with I/O error during file reading"""
         with self.assertRaises(IOError):
-            read_config('some_file.yml')
+            read_config("some_file.yml")
 
     def test_read_config_actual_accounts_file(self):
         """Test read_config with the actual accounts.yml file if it exists"""
         # This test uses the real accounts.yml file in the project
-        if os.path.exists('accounts.yml'):
-            result = read_config('accounts.yml')
+        if os.path.exists("accounts.yml"):
+            result = read_config("accounts.yml")
 
             # Verify the structure matches expected format
             self.assertIsInstance(result, dict)
 
             # Check that all accounts have required fields
             for account_id, account_config in result.items():
-                self.assertIn('nickname', account_config)
-                self.assertIn('type', account_config)
-                self.assertIsInstance(account_config['nickname'], str)
-                self.assertIn(account_config['type'], ['Investment', 'Checking'])
+                self.assertIn("nickname", account_config)
+                self.assertIn("type", account_config)
+                self.assertIsInstance(account_config["nickname"], str)
+                self.assertIn(account_config["type"], ["Investment", "Checking"])
 
                 # Verify account ID format (should end with -CAD or -USD)
-                self.assertTrue(account_id.endswith('-CAD') or account_id.endswith('-USD'))
+                self.assertTrue(
+                    account_id.endswith("-CAD") or account_id.endswith("-USD")
+                )
 
                 # Verify only expected fields are present
-                expected_fields = {'nickname', 'type'}
+                expected_fields = {"nickname", "type"}
                 actual_fields = set(account_config.keys())
-                self.assertEqual(actual_fields, expected_fields,
-                               f"Account {account_id} has unexpected fields: {actual_fields - expected_fields}")
+                self.assertEqual(
+                    actual_fields,
+                    expected_fields,
+                    f"Account {account_id} has unexpected fields: {actual_fields - expected_fields}",
+                )
         else:
             self.skipTest("accounts.yml file not found in project directory")
 
     # Tests for read_csv_files function
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_multiple_files(self, mock_open_file, mock_listdir):
         """Test read_csv_files with multiple CSV files"""
         # Mock directory listing with multiple CSV files
         mock_listdir.return_value = [
-            'monthly-statement-transactions-ACCOUNT1-2025-07-01.csv',
-            'monthly-statement-transactions-ACCOUNT2-2025-06-30.csv',
-            'other-file.txt'  # Should be ignored
+            "monthly-statement-transactions-ACCOUNT1-2025-07-01.csv",
+            "monthly-statement-transactions-ACCOUNT2-2025-06-30.csv",
+            "other-file.txt",  # Should be ignored
         ]
 
         # Mock CSV content for first file
-        csv_content1 = 'date,transaction,description,amount,currency\n2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD\n2025-07-02,SELL,TSLA - 5.0 shares,1000.00,CAD\n'
+        csv_content1 = "date,transaction,description,amount,currency\n2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD\n2025-07-02,SELL,TSLA - 5.0 shares,1000.00,CAD\n"
         # Mock CSV content for second file
-        csv_content2 = 'date,transaction,description,amount,currency\n2025-06-30,DIV,MSFT - Dividend payment,25.50,USD\n'
+        csv_content2 = "date,transaction,description,amount,currency\n2025-06-30,DIV,MSFT - Dividend payment,25.50,USD\n"
 
         # Configure mock to return different content based on file path
-        def mock_open_side_effect(file_path, mode='r'):
-            if 'ACCOUNT1' in file_path:
+        def mock_open_side_effect(file_path, mode="r"):
+            if "ACCOUNT1" in file_path:
                 return mock_open(read_data=csv_content1).return_value
-            elif 'ACCOUNT2' in file_path:
+            elif "ACCOUNT2" in file_path:
                 return mock_open(read_data=csv_content2).return_value
             else:
-                return mock_open(read_data='').return_value
+                return mock_open(read_data="").return_value
 
         mock_open_file.side_effect = mock_open_side_effect
 
-        result = read_csv_files('test_input_folder')
+        result = read_csv_files("test_input_folder")
 
         # Should have 4 accounts (2 files × 2 currencies each)
-        expected_accounts = ['ACCOUNT1-USD', 'ACCOUNT1-CAD', 'ACCOUNT2-USD', 'ACCOUNT2-CAD']
+        expected_accounts = [
+            "ACCOUNT1-USD",
+            "ACCOUNT1-CAD",
+            "ACCOUNT2-USD",
+            "ACCOUNT2-CAD",
+        ]
         self.assertEqual(set(result.keys()), set(expected_accounts))
 
         # ACCOUNT1-USD should have 1 transaction (AAPL BUY)
-        self.assertEqual(len(result['ACCOUNT1-USD']), 1)
-        self.assertIn('AAPL-CT', result['ACCOUNT1-USD'][0])
+        self.assertEqual(len(result["ACCOUNT1-USD"]), 1)
+        self.assertIn("AAPL-CT", result["ACCOUNT1-USD"][0])
 
         # ACCOUNT1-CAD should have 1 transaction (TSLA SELL)
-        self.assertEqual(len(result['ACCOUNT1-CAD']), 1)
-        self.assertIn('TSLA-QH', result['ACCOUNT1-CAD'][0])  # TSLA is CDR in CAD
+        self.assertEqual(len(result["ACCOUNT1-CAD"]), 1)
+        self.assertIn("TSLA-QH", result["ACCOUNT1-CAD"][0])  # TSLA is CDR in CAD
 
         # ACCOUNT2-USD should have 1 transaction (MSFT DIV)
-        self.assertEqual(len(result['ACCOUNT2-USD']), 1)
-        self.assertIn('MSFT-CT', result['ACCOUNT2-USD'][0])
+        self.assertEqual(len(result["ACCOUNT2-USD"]), 1)
+        self.assertIn("MSFT-CT", result["ACCOUNT2-USD"][0])
 
         # ACCOUNT2-CAD should be empty
-        self.assertEqual(len(result['ACCOUNT2-CAD']), 0)
+        self.assertEqual(len(result["ACCOUNT2-CAD"]), 0)
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_empty_directory(self, mock_open_file, mock_listdir):
         """Test read_csv_files with empty directory"""
         mock_listdir.return_value = []
 
-        result = read_csv_files('empty_folder')
+        result = read_csv_files("empty_folder")
 
         self.assertEqual(result, {})
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_no_csv_files(self, mock_open_file, mock_listdir):
         """Test read_csv_files with directory containing no CSV files"""
-        mock_listdir.return_value = ['file1.txt', 'file2.pdf', 'readme.md']
+        mock_listdir.return_value = ["file1.txt", "file2.pdf", "readme.md"]
 
-        result = read_csv_files('no_csv_folder')
+        result = read_csv_files("no_csv_folder")
 
         self.assertEqual(result, {})
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_invalid_filename_format(self, mock_open_file, mock_listdir):
         """Test read_csv_files with CSV files that don't match expected format"""
         mock_listdir.return_value = [
-            'invalid-format.csv',
-            'monthly-statement-transactions-INVALID.csv',  # Missing date
-            'daily-statement-transactions-ACCOUNT1-2025-07-01.csv'  # Wrong prefix
+            "invalid-format.csv",
+            "monthly-statement-transactions-INVALID.csv",  # Missing date
+            "daily-statement-transactions-ACCOUNT1-2025-07-01.csv",  # Wrong prefix
         ]
 
-        result = read_csv_files('invalid_folder')
+        result = read_csv_files("invalid_folder")
 
         # Should be empty since no files match the expected format
         # Note: extract_account_name returns None for invalid formats, which creates 'None-USD' and 'None-CAD' keys
         # But since the files don't match the pattern, they won't be processed, so these should be empty
-        expected_keys = {'None-USD', 'None-CAD'}
+        expected_keys = {"None-USD", "None-CAD"}
         self.assertEqual(set(result.keys()), expected_keys)
-        self.assertEqual(len(result['None-USD']), 0)
-        self.assertEqual(len(result['None-CAD']), 0)
+        self.assertEqual(len(result["None-USD"]), 0)
+        self.assertEqual(len(result["None-CAD"]), 0)
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
-    def test_read_csv_files_mixed_currencies_single_file(self, mock_open_file, mock_listdir):
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
+    def test_read_csv_files_mixed_currencies_single_file(
+        self, mock_open_file, mock_listdir
+    ):
         """Test read_csv_files with single file containing mixed currency transactions"""
-        mock_listdir.return_value = ['monthly-statement-transactions-MIXED123-2025-07-01.csv']
+        mock_listdir.return_value = [
+            "monthly-statement-transactions-MIXED123-2025-07-01.csv"
+        ]
 
-        csv_content = '''date,transaction,description,amount,currency
+        csv_content = """date,transaction,description,amount,currency
 2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD
 2025-07-02,BUY,SHOP - 5.0 shares,-750.00,CAD
 2025-07-03,SELL,MSFT - 8.0 shares,2400.00,USD
 2025-07-04,DIV,TD - Dividend payment,15.75,CAD
-2025-07-05,CONT,Contribution,1000.0,CAD'''
+2025-07-05,CONT,Contribution,1000.0,CAD"""
 
         # The function reads the same file multiple times (once for each currency)
         # We need to configure the mock to return fresh content each time it's opened
@@ -1451,93 +1493,103 @@ WK23MTV36CAD-CAD
 
         mock_open_file.side_effect = mock_open_side_effect
 
-        result = read_csv_files('mixed_folder')
+        result = read_csv_files("mixed_folder")
 
         # Should have 2 accounts (USD and CAD)
-        self.assertIn('MIXED123-USD', result)
-        self.assertIn('MIXED123-CAD', result)
+        self.assertIn("MIXED123-USD", result)
+        self.assertIn("MIXED123-CAD", result)
 
         # USD account should have 2 transactions (AAPL BUY, MSFT SELL)
-        self.assertEqual(len(result['MIXED123-USD']), 2)
+        self.assertEqual(len(result["MIXED123-USD"]), 2)
 
         # CAD account should have 3 transactions (SHOP BUY, TD DIV, CONT)
-        self.assertEqual(len(result['MIXED123-CAD']), 3)
+        self.assertEqual(len(result["MIXED123-CAD"]), 3)
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_empty_csv_file(self, mock_open_file, mock_listdir):
         """Test read_csv_files with empty CSV file"""
-        mock_listdir.return_value = ['monthly-statement-transactions-EMPTY123-2025-07-01.csv']
+        mock_listdir.return_value = [
+            "monthly-statement-transactions-EMPTY123-2025-07-01.csv"
+        ]
 
         # CSV with only headers
-        csv_content = 'date,transaction,description,amount,currency\n'
+        csv_content = "date,transaction,description,amount,currency\n"
         mock_open_file.return_value = mock_open(read_data=csv_content).return_value
 
-        result = read_csv_files('empty_csv_folder')
+        result = read_csv_files("empty_csv_folder")
 
         # Should have both currency accounts but they should be empty
-        self.assertIn('EMPTY123-USD', result)
-        self.assertIn('EMPTY123-CAD', result)
-        self.assertEqual(len(result['EMPTY123-USD']), 0)
-        self.assertEqual(len(result['EMPTY123-CAD']), 0)
+        self.assertIn("EMPTY123-USD", result)
+        self.assertIn("EMPTY123-CAD", result)
+        self.assertEqual(len(result["EMPTY123-USD"]), 0)
+        self.assertEqual(len(result["EMPTY123-CAD"]), 0)
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_ignored_transactions(self, mock_open_file, mock_listdir):
         """Test read_csv_files with transactions that should be ignored"""
-        mock_listdir.return_value = ['monthly-statement-transactions-IGNORE123-2025-07-01.csv']
+        mock_listdir.return_value = [
+            "monthly-statement-transactions-IGNORE123-2025-07-01.csv"
+        ]
 
-        csv_content = '''date,transaction,description,amount,currency
+        csv_content = """date,transaction,description,amount,currency
 2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD
 2025-07-02,RECALL,Stock recall transaction,0.00,USD
 2025-07-03,LOAN,Stock loan transaction,100.00,USD
 2025-07-04,STKDIS,Stock distribution,50.00,USD
 2025-07-05,STKREORG,Stock reorganization,0.00,USD
-2025-07-06,SELL,MSFT - 5.0 shares,1000.00,USD'''
+2025-07-06,SELL,MSFT - 5.0 shares,1000.00,USD"""
 
         mock_open_file.return_value = mock_open(read_data=csv_content).return_value
 
-        result = read_csv_files('ignore_folder')
+        result = read_csv_files("ignore_folder")
 
         # Should only have 2 transactions (BUY and SELL), ignored transactions should not appear
-        self.assertEqual(len(result['IGNORE123-USD']), 2)
-        self.assertEqual(len(result['IGNORE123-CAD']), 0)
+        self.assertEqual(len(result["IGNORE123-USD"]), 2)
+        self.assertEqual(len(result["IGNORE123-CAD"]), 0)
 
         # Verify the transactions are the expected ones
-        usd_transactions = result['IGNORE123-USD']
-        self.assertIn('AAPL-CT', usd_transactions[0])
-        self.assertIn('MSFT-CT', usd_transactions[1])
+        usd_transactions = result["IGNORE123-USD"]
+        self.assertIn("AAPL-CT", usd_transactions[0])
+        self.assertIn("MSFT-CT", usd_transactions[1])
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_options_transactions(self, mock_open_file, mock_listdir):
         """Test read_csv_files with options trading transactions"""
-        mock_listdir.return_value = ['monthly-statement-transactions-OPTIONS123-2025-07-01.csv']
+        mock_listdir.return_value = [
+            "monthly-statement-transactions-OPTIONS123-2025-07-01.csv"
+        ]
 
-        csv_content = '''date,transaction,description,amount,currency
+        csv_content = """date,transaction,description,amount,currency
 2025-07-23,BUYTOOPEN,SPY 450.00 USD CALL 2025-07-25: Bought 2 contract (executed at 2025-07-23) Fee: $1.50,-320.50,USD
-2025-07-25,SELLTOCLOSE,AAPL 180.00 USD PUT 2025-07-30: Sold 1 contract (executed at 2025-07-25) Fee: $0.75,150.25,USD'''
+2025-07-25,SELLTOCLOSE,AAPL 180.00 USD PUT 2025-07-30: Sold 1 contract (executed at 2025-07-25) Fee: $0.75,150.25,USD"""
 
         mock_open_file.return_value = mock_open(read_data=csv_content).return_value
 
-        result = read_csv_files('options_folder')
+        result = read_csv_files("options_folder")
 
         # Should have 2 options transactions in USD account
-        self.assertEqual(len(result['OPTIONS123-USD']), 2)
-        self.assertEqual(len(result['OPTIONS123-CAD']), 0)
+        self.assertEqual(len(result["OPTIONS123-USD"]), 2)
+        self.assertEqual(len(result["OPTIONS123-CAD"]), 0)
 
         # Verify options symbols are preserved
-        usd_transactions = result['OPTIONS123-USD']
-        self.assertIn('SPY 450.00 USD CALL 2025-07-25', usd_transactions[0])
-        self.assertIn('AAPL 180.00 USD PUT 2025-07-30', usd_transactions[1])
+        usd_transactions = result["OPTIONS123-USD"]
+        self.assertIn("SPY 450.00 USD CALL 2025-07-25", usd_transactions[0])
+        self.assertIn("AAPL 180.00 USD PUT 2025-07-30", usd_transactions[1])
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
-    def test_read_csv_files_various_transaction_types(self, mock_open_file, mock_listdir):
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
+    def test_read_csv_files_various_transaction_types(
+        self, mock_open_file, mock_listdir
+    ):
         """Test read_csv_files with various transaction types"""
-        mock_listdir.return_value = ['monthly-statement-transactions-VARIOUS123-2025-07-01.csv']
+        mock_listdir.return_value = [
+            "monthly-statement-transactions-VARIOUS123-2025-07-01.csv"
+        ]
 
-        csv_content = '''date,transaction,description,amount,currency
+        csv_content = """date,transaction,description,amount,currency
 2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD
 2025-07-02,SELL,MSFT - 5.0 shares,1000.00,USD
 2025-07-03,DIV,GOOGL - Dividend payment,25.50,USD
@@ -1547,235 +1599,241 @@ WK23MTV36CAD-CAD
 2025-07-07,TRFOUT,Transfer to external account,200.00,USD
 2025-07-08,CASHBACK,Credit card cashback,15.00,USD
 2025-07-09,EFT,Electronic funds transfer,300.00,USD
-2025-07-10,INT,Interest payment,8.50,USD'''
+2025-07-10,INT,Interest payment,8.50,USD"""
 
         mock_open_file.return_value = mock_open(read_data=csv_content).return_value
 
-        result = read_csv_files('various_folder')
+        result = read_csv_files("various_folder")
 
         # Should have 10 transactions in USD account
-        self.assertEqual(len(result['VARIOUS123-USD']), 10)
-        self.assertEqual(len(result['VARIOUS123-CAD']), 0)
+        self.assertEqual(len(result["VARIOUS123-USD"]), 10)
+        self.assertEqual(len(result["VARIOUS123-CAD"]), 0)
 
         # Verify different transaction types are processed
-        usd_transactions = result['VARIOUS123-USD']
-        transaction_text = '\n'.join(usd_transactions)
+        usd_transactions = result["VARIOUS123-USD"]
+        transaction_text = "\n".join(usd_transactions)
 
         # Check for different QIF transaction types
-        self.assertIn('NBuy', transaction_text)  # BUY
-        self.assertIn('NSell', transaction_text)  # SELL
-        self.assertIn('NDiv', transaction_text)  # DIV
-        self.assertIn('NXIn', transaction_text)  # CONT, FPLINT, CASHBACK, EFT, INT
-        self.assertIn('NXOut', transaction_text)  # NRT
-        self.assertIn('T-200.0', transaction_text)  # TRFOUT (negative amount)
+        self.assertIn("NBuy", transaction_text)  # BUY
+        self.assertIn("NSell", transaction_text)  # SELL
+        self.assertIn("NDiv", transaction_text)  # DIV
+        self.assertIn("NXIn", transaction_text)  # CONT, FPLINT, CASHBACK, EFT, INT
+        self.assertIn("NXOut", transaction_text)  # NRT
+        self.assertIn("T-200.0", transaction_text)  # TRFOUT (negative amount)
 
-    @patch('os.listdir')
+    @patch("os.listdir")
     def test_read_csv_files_directory_not_found(self, mock_listdir):
         """Test read_csv_files with non-existent directory"""
         mock_listdir.side_effect = FileNotFoundError("Directory not found")
 
         with self.assertRaises(FileNotFoundError):
-            read_csv_files('nonexistent_folder')
+            read_csv_files("nonexistent_folder")
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_file_read_error(self, mock_open_file, mock_listdir):
         """Test read_csv_files with file read error"""
-        mock_listdir.return_value = ['monthly-statement-transactions-ERROR123-2025-07-01.csv']
+        mock_listdir.return_value = [
+            "monthly-statement-transactions-ERROR123-2025-07-01.csv"
+        ]
         mock_open_file.side_effect = IOError("Permission denied")
 
         with self.assertRaises(IOError):
-            read_csv_files('error_folder')
+            read_csv_files("error_folder")
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_malformed_csv(self, mock_open_file, mock_listdir):
         """Test read_csv_files with malformed CSV content"""
-        mock_listdir.return_value = ['monthly-statement-transactions-MALFORMED123-2025-07-01.csv']
+        mock_listdir.return_value = [
+            "monthly-statement-transactions-MALFORMED123-2025-07-01.csv"
+        ]
 
         # CSV with missing columns
-        csv_content = '''date,transaction,description
-2025-07-01,BUY,AAPL - 10.0 shares'''
+        csv_content = """date,transaction,description
+2025-07-01,BUY,AAPL - 10.0 shares"""
 
         mock_open_file.return_value = mock_open(read_data=csv_content).return_value
 
         # Should raise KeyError when trying to access missing 'amount' or 'currency' columns
         with self.assertRaises(KeyError):
-            read_csv_files('malformed_folder')
+            read_csv_files("malformed_folder")
 
-    @patch('os.listdir')
-    @patch('builtins.open', new_callable=mock_open)
+    @patch("os.listdir")
+    @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_cdr_symbol_handling(self, mock_open_file, mock_listdir):
         """Test read_csv_files with CDR symbols in different currencies"""
-        mock_listdir.return_value = ['monthly-statement-transactions-CDR123-2025-07-01.csv']
+        mock_listdir.return_value = [
+            "monthly-statement-transactions-CDR123-2025-07-01.csv"
+        ]
 
-        csv_content = '''date,transaction,description,amount,currency
+        csv_content = """date,transaction,description,amount,currency
 2025-07-01,BUY,TSLA - 5.0 shares,-1250.00,CAD
 2025-07-02,BUY,TSLA - 3.0 shares,-750.00,USD
 2025-07-03,BUY,AAPL - 10.0 shares,-1500.00,CAD
-2025-07-04,BUY,SHOP - 8.0 shares,-1200.00,CAD'''
+2025-07-04,BUY,SHOP - 8.0 shares,-1200.00,CAD"""
 
         # The function reads the same file multiple times, so we need to ensure the mock returns fresh content each time
         def mock_open_side_effect(*args, **kwargs):
             return mock_open(read_data=csv_content).return_value
+
         mock_open_file.side_effect = mock_open_side_effect
 
-        result = read_csv_files('cdr_folder')
+        result = read_csv_files("cdr_folder")
 
         # Verify we have both currency accounts
-        self.assertIn('CDR123-CAD', result)
-        self.assertIn('CDR123-USD', result)
+        self.assertIn("CDR123-CAD", result)
+        self.assertIn("CDR123-USD", result)
 
         # Check that we have the expected number of transactions
-        self.assertEqual(len(result['CDR123-CAD']), 3)  # TSLA, AAPL, SHOP in CAD
-        self.assertEqual(len(result['CDR123-USD']), 1)   # TSLA in USD
+        self.assertEqual(len(result["CDR123-CAD"]), 3)  # TSLA, AAPL, SHOP in CAD
+        self.assertEqual(len(result["CDR123-USD"]), 1)  # TSLA in USD
 
         # Check CDR symbol mapping
-        cad_transactions = '\n'.join(result['CDR123-CAD'])
-        usd_transactions = '\n'.join(result['CDR123-USD'])
+        cad_transactions = "\n".join(result["CDR123-CAD"])
+        usd_transactions = "\n".join(result["CDR123-USD"])
 
         # TSLA and AAPL in CAD should get -QH suffix (CDR)
-        self.assertIn('TSLA-QH', cad_transactions)
-        self.assertIn('AAPL-QH', cad_transactions)
+        self.assertIn("TSLA-QH", cad_transactions)
+        self.assertIn("AAPL-QH", cad_transactions)
 
         # SHOP in CAD should get -CT suffix (not CDR)
-        self.assertIn('SHOP-CT', cad_transactions)
+        self.assertIn("SHOP-CT", cad_transactions)
 
         # TSLA in USD should get -CT suffix (not CDR when in USD)
-        self.assertIn('TSLA-CT', usd_transactions)
+        self.assertIn("TSLA-CT", usd_transactions)
 
     # Tests for export_qif_files function
     def test_export_qif_files_investment_account_basic(self):
         """Test export_qif_files with basic Investment account"""
         # Create test data
         account_data = {
-            'TEST123CAD-USD': [
-                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^',
-                'D2025-07-16\nNSell\nYMSFT-CT\nI300.0\nQ5.0\nT1500.0\nO0.00\nCc\n^'
+            "TEST123CAD-USD": [
+                "D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^",
+                "D2025-07-16\nNSell\nYMSFT-CT\nI300.0\nQ5.0\nT1500.0\nO0.00\nCc\n^",
             ]
         }
 
         # Create config data
         config_data = {
-            'TEST123CAD-USD': {
-                'nickname': 'My-Test-Investment',
-                'type': 'Investment'
-            }
+            "TEST123CAD-USD": {"nickname": "My-Test-Investment", "type": "Investment"}
         }
 
         # Mock read_config to return our test config data
-        with patch('app.main.read_config', return_value=config_data) as mock_read_config:
-            with patch('builtins.open', mock_open()) as mock_file:
-                export_qif_files(account_data, 'dummy_config.yml')
+        with patch(
+            "app.main.read_config", return_value=config_data
+        ) as mock_read_config:
+            with patch("builtins.open", mock_open()) as mock_file:
+                export_qif_files(account_data, "dummy_config.yml")
 
                 # Verify read_config was called
-                mock_read_config.assert_called_once_with('dummy_config.yml')
+                mock_read_config.assert_called_once_with("dummy_config.yml")
 
                 # Verify file was opened for writing
-                mock_file.assert_called_with('output/My-Test-Investment.qif', 'w')
+                mock_file.assert_called_with("output/My-Test-Investment.qif", "w")
 
                 # Verify content written to file
                 handle = mock_file.return_value
-                written_content = ''.join(call.args[0] for call in handle.write.call_args_list)
+                written_content = "".join(
+                    call.args[0] for call in handle.write.call_args_list
+                )
 
                 # Should start with Investment header
-                self.assertIn('!Type:Invst', written_content)
+                self.assertIn("!Type:Invst", written_content)
                 # Should contain the transactions
-                self.assertIn('AAPL-CT', written_content)
-                self.assertIn('MSFT-CT', written_content)
+                self.assertIn("AAPL-CT", written_content)
+                self.assertIn("MSFT-CT", written_content)
 
     def test_export_qif_files_checking_account_basic(self):
         """Test export_qif_files with basic Checking account"""
         # Create test data
         account_data = {
-            'WK23MTV36CAD-CAD': [
-                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^',
-                'D2025-07-16\nT-500.0\nO0.00\nCc\nPWithdrawal\n^'
+            "WK23MTV36CAD-CAD": [
+                "D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^",
+                "D2025-07-16\nT-500.0\nO0.00\nCc\nPWithdrawal\n^",
             ]
         }
 
         # Create config data
         config_data = {
-            'WK23MTV36CAD-CAD': {
-                'nickname': 'My-Checking',
-                'type': 'Checking'
-            }
+            "WK23MTV36CAD-CAD": {"nickname": "My-Checking", "type": "Checking"}
         }
 
         # Mock read_config to return our test config data
-        with patch('app.main.read_config', return_value=config_data):
-            with patch('builtins.open', mock_open()) as mock_file:
-                export_qif_files(account_data, 'dummy_config.yml')
+        with patch("app.main.read_config", return_value=config_data):
+            with patch("builtins.open", mock_open()) as mock_file:
+                export_qif_files(account_data, "dummy_config.yml")
 
                 # Verify file was opened for writing
-                mock_file.assert_called_with('output/My-Checking.qif', 'w')
+                mock_file.assert_called_with("output/My-Checking.qif", "w")
 
                 # Verify content written to file
                 handle = mock_file.return_value
-                written_content = ''.join(call.args[0] for call in handle.write.call_args_list)
+                written_content = "".join(
+                    call.args[0] for call in handle.write.call_args_list
+                )
 
                 # Should start with Bank header
-                self.assertIn('!Type:Bank', written_content)
+                self.assertIn("!Type:Bank", written_content)
                 # Should contain the transactions
-                self.assertIn('T1000.0', written_content)
-                self.assertIn('T-500.0', written_content)
+                self.assertIn("T1000.0", written_content)
+                self.assertIn("T-500.0", written_content)
 
     def test_export_qif_files_empty_transactions_skipped(self):
         """Test export_qif_files skips accounts with empty transaction lists"""
         # Create test data with empty transactions
         account_data = {
-            'EMPTY123CAD-USD': [],
-            'NONEMPTY456CAD-USD': [
-                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
-            ]
+            "EMPTY123CAD-USD": [],
+            "NONEMPTY456CAD-USD": [
+                "D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^"
+            ],
         }
 
         # Create config data
         config_data = {
-            'EMPTY123CAD-USD': {
-                'nickname': 'Empty-Account',
-                'type': 'Investment'
+            "EMPTY123CAD-USD": {"nickname": "Empty-Account", "type": "Investment"},
+            "NONEMPTY456CAD-USD": {
+                "nickname": "Non-Empty-Account",
+                "type": "Investment",
             },
-            'NONEMPTY456CAD-USD': {
-                'nickname': 'Non-Empty-Account',
-                'type': 'Investment'
-            }
         }
 
         # Mock read_config to return our test config data
-        with patch('app.main.read_config', return_value=config_data):
-            with patch('builtins.open', mock_open()) as mock_file:
-                export_qif_files(account_data, 'dummy_config.yml')
+        with patch("app.main.read_config", return_value=config_data):
+            with patch("builtins.open", mock_open()) as mock_file:
+                export_qif_files(account_data, "dummy_config.yml")
 
                 # Should only be called once (for non-empty account)
                 self.assertEqual(mock_file.call_count, 1)
-                mock_file.assert_called_with('output/Non-Empty-Account.qif', 'w')
+                mock_file.assert_called_with("output/Non-Empty-Account.qif", "w")
 
     def test_export_qif_files_unknown_account_error(self):
         """Test export_qif_files raises ValueError for unknown account"""
         # Create test data with account not in config
         account_data = {
-            'UNKNOWN123CAD-USD': [
-                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            "UNKNOWN123CAD-USD": [
+                "D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^"
             ]
         }
 
         # Create temporary config file without the account
         config_data = {
-            'DIFFERENT456CAD-USD': {
-                'nickname': 'Different-Account',
-                'type': 'Investment'
+            "DIFFERENT456CAD-USD": {
+                "nickname": "Different-Account",
+                "type": "Investment",
             }
         }
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as config_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as config_file:
             yaml.dump(config_data, config_file)
             config_file_path = config_file.name
 
         with self.assertRaises(ValueError) as context:
             export_qif_files(account_data, config_file_path)
 
-        self.assertIn('Unknown account', str(context.exception))
+        self.assertIn("Unknown account", str(context.exception))
 
         # Clean up
         os.unlink(config_file_path)
@@ -1784,20 +1842,19 @@ WK23MTV36CAD-CAD
         """Test export_qif_files detects currency mismatch for CAD checking account"""
         # Create test data - CAD base account with USD suffix (mismatch)
         account_data = {
-            'WK23MTV36CAD-USD': [  # CAD base account but USD suffix
-                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^'
+            "WK23MTV36CAD-USD": [  # CAD base account but USD suffix
+                "D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^"
             ]
         }
 
         # Create temporary config file
         config_data = {
-            'WK23MTV36CAD-USD': {
-                'nickname': 'Mismatched-Checking',
-                'type': 'Checking'
-            }
+            "WK23MTV36CAD-USD": {"nickname": "Mismatched-Checking", "type": "Checking"}
         }
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as config_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as config_file:
             yaml.dump(config_data, config_file)
             config_file_path = config_file.name
 
@@ -1805,10 +1862,10 @@ WK23MTV36CAD-CAD
             export_qif_files(account_data, config_file_path)
 
         error_message = str(context.exception)
-        self.assertIn('Currency mismatch', error_message)
-        self.assertIn('WK23MTV36CAD-USD', error_message)
-        self.assertIn('USD', error_message)
-        self.assertIn('CAD', error_message)
+        self.assertIn("Currency mismatch", error_message)
+        self.assertIn("WK23MTV36CAD-USD", error_message)
+        self.assertIn("USD", error_message)
+        self.assertIn("CAD", error_message)
 
         # Clean up
         os.unlink(config_file_path)
@@ -1817,20 +1874,22 @@ WK23MTV36CAD-CAD
         """Test export_qif_files detects currency mismatch for USD checking account"""
         # Create test data - USD base account with CAD suffix (mismatch)
         account_data = {
-            'WK5DRT238USD-CAD': [  # USD base account but CAD suffix
-                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^'
+            "WK5DRT238USD-CAD": [  # USD base account but CAD suffix
+                "D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^"
             ]
         }
 
         # Create temporary config file
         config_data = {
-            'WK5DRT238USD-CAD': {
-                'nickname': 'Mismatched-USD-Checking',
-                'type': 'Checking'
+            "WK5DRT238USD-CAD": {
+                "nickname": "Mismatched-USD-Checking",
+                "type": "Checking",
             }
         }
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as config_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as config_file:
             yaml.dump(config_data, config_file)
             config_file_path = config_file.name
 
@@ -1838,10 +1897,10 @@ WK23MTV36CAD-CAD
             export_qif_files(account_data, config_file_path)
 
         error_message = str(context.exception)
-        self.assertIn('Currency mismatch', error_message)
-        self.assertIn('WK5DRT238USD-CAD', error_message)
-        self.assertIn('CAD', error_message)
-        self.assertIn('USD', error_message)
+        self.assertIn("Currency mismatch", error_message)
+        self.assertIn("WK5DRT238USD-CAD", error_message)
+        self.assertIn("CAD", error_message)
+        self.assertIn("USD", error_message)
 
         # Clean up
         os.unlink(config_file_path)
@@ -1850,31 +1909,25 @@ WK23MTV36CAD-CAD
         """Test export_qif_files allows matching currencies for checking accounts"""
         # Create test data with matching currencies
         account_data = {
-            'WK23MTV36CAD-CAD': [  # CAD base account with CAD suffix (match)
-                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^'
+            "WK23MTV36CAD-CAD": [  # CAD base account with CAD suffix (match)
+                "D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^"
             ],
-            'WK5DRT238USD-USD': [  # USD base account with USD suffix (match)
-                'D2025-07-16\nT500.0\nO0.00\nCc\nPDeposit\n^'
-            ]
+            "WK5DRT238USD-USD": [  # USD base account with USD suffix (match)
+                "D2025-07-16\nT500.0\nO0.00\nCc\nPDeposit\n^"
+            ],
         }
 
         # Create config data
         config_data = {
-            'WK23MTV36CAD-CAD': {
-                'nickname': 'CAD-Checking',
-                'type': 'Checking'
-            },
-            'WK5DRT238USD-USD': {
-                'nickname': 'USD-Checking',
-                'type': 'Checking'
-            }
+            "WK23MTV36CAD-CAD": {"nickname": "CAD-Checking", "type": "Checking"},
+            "WK5DRT238USD-USD": {"nickname": "USD-Checking", "type": "Checking"},
         }
 
         # Mock read_config to return our test config data
-        with patch('app.main.read_config', return_value=config_data):
-            with patch('builtins.open', mock_open()) as mock_file:
+        with patch("app.main.read_config", return_value=config_data):
+            with patch("builtins.open", mock_open()) as mock_file:
                 # Should not raise any exceptions
-                export_qif_files(account_data, 'dummy_config.yml')
+                export_qif_files(account_data, "dummy_config.yml")
 
                 # Should be called twice (once for each account)
                 self.assertEqual(mock_file.call_count, 2)
@@ -1883,31 +1936,25 @@ WK23MTV36CAD-CAD
         """Test export_qif_files does not validate currency for Investment accounts"""
         # Create test data - Investment accounts should not have currency validation
         account_data = {
-            'H16530307CAD-USD': [  # CAD base account with USD suffix (should be OK for Investment)
-                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            "H16530307CAD-USD": [  # CAD base account with USD suffix (should be OK for Investment)
+                "D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^"
             ],
-            'H16530307CAD-CAD': [  # CAD base account with CAD suffix
-                'D2025-07-16\nNBuy\nYSHOP-CT\nI100.0\nQ5.0\nT500.0\nO0.00\nCc\n^'
-            ]
+            "H16530307CAD-CAD": [  # CAD base account with CAD suffix
+                "D2025-07-16\nNBuy\nYSHOP-CT\nI100.0\nQ5.0\nT500.0\nO0.00\nCc\n^"
+            ],
         }
 
         # Create config data
         config_data = {
-            'H16530307CAD-USD': {
-                'nickname': 'Investment-USD',
-                'type': 'Investment'
-            },
-            'H16530307CAD-CAD': {
-                'nickname': 'Investment-CAD',
-                'type': 'Investment'
-            }
+            "H16530307CAD-USD": {"nickname": "Investment-USD", "type": "Investment"},
+            "H16530307CAD-CAD": {"nickname": "Investment-CAD", "type": "Investment"},
         }
 
         # Mock read_config to return our test config data
-        with patch('app.main.read_config', return_value=config_data):
-            with patch('builtins.open', mock_open()) as mock_file:
+        with patch("app.main.read_config", return_value=config_data):
+            with patch("builtins.open", mock_open()) as mock_file:
                 # Should not raise any exceptions for Investment accounts
-                export_qif_files(account_data, 'dummy_config.yml')
+                export_qif_files(account_data, "dummy_config.yml")
 
                 # Should be called twice (once for each account)
                 self.assertEqual(mock_file.call_count, 2)
@@ -1916,46 +1963,35 @@ WK23MTV36CAD-CAD
         """Test export_qif_files with multiple Investment and Checking accounts"""
         # Create test data with mixed account types
         account_data = {
-            'H16530307CAD-USD': [
-                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            "H16530307CAD-USD": [
+                "D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^"
             ],
-            'H16530307CAD-CAD': [
-                'D2025-07-16\nNBuy\nYTSLA-QH\nI250.0\nQ2.0\nT500.0\nO0.00\nCc\n^'
+            "H16530307CAD-CAD": [
+                "D2025-07-16\nNBuy\nYTSLA-QH\nI250.0\nQ2.0\nT500.0\nO0.00\nCc\n^"
             ],
-            'WK23MTV36CAD-CAD': [
-                'D2025-07-17\nT1000.0\nO0.00\nCc\nPDeposit\n^'
-            ]
+            "WK23MTV36CAD-CAD": ["D2025-07-17\nT1000.0\nO0.00\nCc\nPDeposit\n^"],
         }
 
         # Create config data
         config_data = {
-            'H16530307CAD-USD': {
-                'nickname': 'Investment-USD',
-                'type': 'Investment'
-            },
-            'H16530307CAD-CAD': {
-                'nickname': 'Investment-CAD',
-                'type': 'Investment'
-            },
-            'WK23MTV36CAD-CAD': {
-                'nickname': 'Checking-CAD',
-                'type': 'Checking'
-            }
+            "H16530307CAD-USD": {"nickname": "Investment-USD", "type": "Investment"},
+            "H16530307CAD-CAD": {"nickname": "Investment-CAD", "type": "Investment"},
+            "WK23MTV36CAD-CAD": {"nickname": "Checking-CAD", "type": "Checking"},
         }
 
         # Mock read_config to return our test config data
-        with patch('app.main.read_config', return_value=config_data):
-            with patch('builtins.open', mock_open()) as mock_file:
-                export_qif_files(account_data, 'dummy_config.yml')
+        with patch("app.main.read_config", return_value=config_data):
+            with patch("builtins.open", mock_open()) as mock_file:
+                export_qif_files(account_data, "dummy_config.yml")
 
                 # Should be called three times (once for each account)
                 self.assertEqual(mock_file.call_count, 3)
 
                 # Verify correct filenames were used
                 expected_calls = [
-                    ('output/Investment-USD.qif', 'w'),
-                    ('output/Investment-CAD.qif', 'w'),
-                    ('output/Checking-CAD.qif', 'w')
+                    ("output/Investment-USD.qif", "w"),
+                    ("output/Investment-CAD.qif", "w"),
+                    ("output/Checking-CAD.qif", "w"),
                 ]
                 actual_calls = [call.args for call in mock_file.call_args_list]
                 self.assertEqual(set(actual_calls), set(expected_calls))
@@ -1964,36 +2000,36 @@ WK23MTV36CAD-CAD
         """Test export_qif_files with special characters in account nicknames"""
         # Create test data
         account_data = {
-            'SPECIAL123CAD-USD': [
-                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            "SPECIAL123CAD-USD": [
+                "D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^"
             ]
         }
 
         # Create config data with special characters in nickname
         config_data = {
-            'SPECIAL123CAD-USD': {
-                'nickname': 'My-Special_Account.Test',
-                'type': 'Investment'
+            "SPECIAL123CAD-USD": {
+                "nickname": "My-Special_Account.Test",
+                "type": "Investment",
             }
         }
 
         # Mock read_config to return our test config data
-        with patch('app.main.read_config', return_value=config_data):
-            with patch('builtins.open', mock_open()) as mock_file:
-                export_qif_files(account_data, 'dummy_config.yml')
+        with patch("app.main.read_config", return_value=config_data):
+            with patch("builtins.open", mock_open()) as mock_file:
+                export_qif_files(account_data, "dummy_config.yml")
 
                 # Verify filename includes special characters
-                mock_file.assert_called_with('output/My-Special_Account.Test.qif', 'w')
+                mock_file.assert_called_with("output/My-Special_Account.Test.qif", "w")
 
     def test_export_qif_files_config_file_not_found(self):
         """Test export_qif_files with non-existent config file"""
         account_data = {
-            'TEST123CAD-USD': [
-                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            "TEST123CAD-USD": [
+                "D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^"
             ]
         }
 
-        non_existent_config = '/path/that/does/not/exist/config.yml'
+        non_existent_config = "/path/that/does/not/exist/config.yml"
 
         with self.assertRaises(FileNotFoundError):
             export_qif_files(account_data, non_existent_config)
@@ -2001,8 +2037,8 @@ WK23MTV36CAD-CAD
     def test_export_qif_files_invalid_config_file(self):
         """Test export_qif_files with invalid YAML config file"""
         account_data = {
-            'TEST123CAD-USD': [
-                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            "TEST123CAD-USD": [
+                "D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^"
             ]
         }
 
@@ -2014,7 +2050,9 @@ TEST123CAD-USD:
     invalid_indentation: true
 """
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as config_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as config_file:
             config_file.write(invalid_yaml_content)
             config_file_path = config_file.name
 
@@ -2027,47 +2065,39 @@ TEST123CAD-USD:
     def test_export_qif_files_account_without_hyphen(self):
         """Test export_qif_files with account name without hyphen (edge case)"""
         # Create test data with account name without hyphen
-        account_data = {
-            'NOHYPHEN': [
-                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^'
-            ]
-        }
+        account_data = {"NOHYPHEN": ["D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^"]}
 
         # Create config data
         config_data = {
-            'NOHYPHEN': {
-                'nickname': 'No-Hyphen-Account',
-                'type': 'Checking'
-            }
+            "NOHYPHEN": {"nickname": "No-Hyphen-Account", "type": "Checking"}
         }
 
         # Mock read_config to return our test config data
-        with patch('app.main.read_config', return_value=config_data):
-            with patch('builtins.open', mock_open()) as mock_file:
+        with patch("app.main.read_config", return_value=config_data):
+            with patch("builtins.open", mock_open()) as mock_file:
                 # Should not raise exceptions for accounts without hyphens
-                export_qif_files(account_data, 'dummy_config.yml')
+                export_qif_files(account_data, "dummy_config.yml")
 
                 # Should successfully create the file
-                mock_file.assert_called_with('output/No-Hyphen-Account.qif', 'w')
+                mock_file.assert_called_with("output/No-Hyphen-Account.qif", "w")
 
     def test_export_qif_files_checking_account_default_currency_cad(self):
         """Test export_qif_files defaults to CAD for unclear checking account base names"""
         # Create test data with unclear base account name
         account_data = {
-            'UNCLEAR123-USD': [  # Unclear base name, should default to CAD expectation
-                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^'
+            "UNCLEAR123-USD": [  # Unclear base name, should default to CAD expectation
+                "D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^"
             ]
         }
 
         # Create temporary config file
         config_data = {
-            'UNCLEAR123-USD': {
-                'nickname': 'Unclear-Checking',
-                'type': 'Checking'
-            }
+            "UNCLEAR123-USD": {"nickname": "Unclear-Checking", "type": "Checking"}
         }
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as config_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as config_file:
             yaml.dump(config_data, config_file)
             config_file_path = config_file.name
 
@@ -2076,33 +2106,30 @@ TEST123CAD-USD:
             export_qif_files(account_data, config_file_path)
 
         error_message = str(context.exception)
-        self.assertIn('Currency mismatch', error_message)
+        self.assertIn("Currency mismatch", error_message)
 
         # Clean up
         os.unlink(config_file_path)
 
-    @patch('builtins.print')  # Mock print to avoid output during tests
+    @patch("builtins.print")  # Mock print to avoid output during tests
     def test_export_qif_files_prints_config_and_account_names(self, mock_print):
         """Test export_qif_files prints config and processes account names"""
         # Create test data
         account_data = {
-            'TEST123CAD-USD': [
-                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            "TEST123CAD-USD": [
+                "D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^"
             ]
         }
 
         # Create config data
         config_data = {
-            'TEST123CAD-USD': {
-                'nickname': 'Test-Investment',
-                'type': 'Investment'
-            }
+            "TEST123CAD-USD": {"nickname": "Test-Investment", "type": "Investment"}
         }
 
         # Mock read_config to return our test config data
-        with patch('app.main.read_config', return_value=config_data):
-            with patch('builtins.open', mock_open()) as mock_file:
-                export_qif_files(account_data, 'dummy_config.yml')
+        with patch("app.main.read_config", return_value=config_data):
+            with patch("builtins.open", mock_open()) as mock_file:
+                export_qif_files(account_data, "dummy_config.yml")
 
                 # Verify print statements were called
                 self.assertTrue(mock_print.called)
@@ -2113,7 +2140,8 @@ TEST123CAD-USD:
 
                 # Check that account name was printed (second call)
                 second_call_args = mock_print.call_args_list[1][0]
-                self.assertEqual(second_call_args[0], 'TEST123CAD-USD')
+                self.assertEqual(second_call_args[0], "TEST123CAD-USD")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
