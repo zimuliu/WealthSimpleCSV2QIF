@@ -3,7 +3,7 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
 [![PyYAML](https://img.shields.io/badge/dependency-PyYAML-green.svg)](https://pyyaml.org/)
-[![Tests](https://github.com/zimuliu/WealthSimpleCSV2QIF/workflows/Tests%20and%20Coverage/badge.svg)](https://github.com/zimuliu/WealthSimpleCSV2QIF/actions)
+[![Tests](https://github.com/zimuliu/WealthSimpleCSV2QIF/actions/workflows/test.yml/badge.svg)](https://github.com/zimuliu/WealthSimpleCSV2QIF/actions)
 [![codecov](https://codecov.io/gh/zimuliu/WealthSimpleCSV2QIF/branch/main/graph/badge.svg)](https://codecov.io/gh/zimuliu/WealthSimpleCSV2QIF)
 [![Coverage Status](https://coveralls.io/repos/github/zimuliu/WealthSimpleCSV2QIF/badge.svg?branch=main)](https://coveralls.io/github/zimuliu/WealthSimpleCSV2QIF?branch=main)
 
