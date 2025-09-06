@@ -130,23 +130,29 @@ cp accounts-sample.yml accounts.yml
 ```yaml
 # Multi-currency account example (most common scenario)
 # Single WealthSimple account with both USD and CAD transactions
-AB1234567CAD:
-  nickname: My-TFSA               # Output filenames will be "My-TFSA-USD.qif" and "My-TFSA-CAD.qif"
-  type: Investment                # QIF account type: Investment or Checking
+AB1234567CAD-CAD:
+  nickname: My-TFSA-CAD          # Output filename will be "My-TFSA-CAD.qif"
+  type: Investment               # QIF account type: Investment or Checking
+AB1234567CAD-USD:
+  nickname: My-TFSA-USD          # Output filename will be "My-TFSA-USD.qif"
+  type: Investment
 
 # Cash account example (USD only - matches account currency)
-CD9876543USD:
-  nickname: My-US-Saving       # Output filename will be "My-US-Saving-USD.qif" only
+CD9876543USD-USD:
+  nickname: My-US-Saving         # Output filename will be "My-US-Saving.qif"
   type: Checking
 
 # CAD cash account example
-EF5555555CAD:
-  nickname: My-Chequeing           # Output filename will be "My-Chequeing-CAD.qif" only
+EF5555555CAD-CAD:
+  nickname: My-Chequeing          # Output filename will be "My-Chequeing.qif"
   type: Checking
 
 # Investment account example (processes both currencies)
-GH7777777CAD:
-  nickname: My-Trading            # Output filenames will be "My-Trading-USD.qif" and "My-Trading-CAD.qif"
+GH7777777CAD-CAD:
+  nickname: My-Trading-CAD        # Output filename will be "My-Trading-CAD.qif"
+  type: Investment
+GH7777777CAD-USD:
+  nickname: My-Trading-USD        # Output filename will be "My-Trading-USD.qif"
   type: Investment
 ```
 
@@ -170,16 +176,15 @@ monthly-statement-transactions-AB1234567CAD-2025-07-01.csv → Account ID: AB123
 monthly-statement-transactions-CD9876543USD-2025-06-30.csv → Account ID: CD9876543USD
 ```
 
-**Important Multi-Currency Note**: The tool automatically processes both USD and CAD transactions from each account. You only need to configure the base account name in your `accounts.yml`:
+**Important Multi-Currency Note**: You need to configure each currency variant separately in your `accounts.yml`:
 
-- Configure: `AB1234567CAD` (base account name from CSV filename)
-- Tool automatically creates: `AB1234567CAD-USD` and `AB1234567CAD-CAD` internally for processing
-- Output files: `My-TFSA-USD.qif` and `My-TFSA-CAD.qif` (nickname + currency suffix)
+- Configure: `AB1234567CAD-CAD` and `AB1234567CAD-USD` (with currency suffixes)
+- Output files: `My-TFSA-CAD.qif` and `My-TFSA-USD.qif` (using configured nicknames)
 
 **Important for Checking Accounts:** Checking (cash) accounts only process transactions matching the account's currency suffix. For example:
-- `CD9876543USD` (Checking) → Only processes USD transactions → `My-US-Saving-USD.qif`
-- `EF5555555CAD` (Checking) → Only processes CAD transactions → `My-Chequeing-CAD.qif`
-- Investment accounts process both currencies regardless of account suffix
+- `CD9876543USD-USD` (Checking) → Only processes USD transactions → `My-US-Saving.qif`
+- `EF5555555CAD-CAD` (Checking) → Only processes CAD transactions → `My-Chequeing.qif`
+- Investment accounts can process both currencies if configured for both
 
 This allows proper separation of currencies into different QIF files for accurate accounting.
 
@@ -470,8 +475,11 @@ date,transaction,description,amount,balance,currency
 
 **accounts.yml Configuration:**
 ```yaml
-AB1234567CAD:
-  nickname: My-Investment
+AB1234567CAD-CAD:
+  nickname: My-Investment-CAD
+  type: Investment
+AB1234567CAD-USD:
+  nickname: My-Investment-USD
   type: Investment
 ```
 

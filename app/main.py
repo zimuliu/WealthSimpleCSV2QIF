@@ -291,52 +291,49 @@ def export_qif_files(account_data, config_filename):
     Args:
         account_data (dict): Dictionary where keys are account names with currency suffixes
                            (e.g., 'AB1234567CAD-USD') and values are lists of QIF entry strings.
-        config_filename (str): Path to YAML configuration file containing base account mappings.
+        config_filename (str): Path to YAML configuration file containing account mappings with currency suffixes.
 
     Configuration Example:
         accounts.yml:
         ```yaml
-        AB1234567CAD:
-          nickname: My-Investment
+        AB1234567CAD-CAD:
+          nickname: My-Investment-CAD
           type: Investment
-        CD9876543USD:
+        AB1234567CAD-USD:
+          nickname: My-Investment-USD
+          type: Investment
+        CD9876543USD-USD:
           nickname: My-US-Saving
           type: Checking
-        EF5555555CAD:
+        EF5555555CAD-CAD:
           nickname: My-Chequeing
           type: Checking
         ```
 
     Output Files:
-        - output/My-Investment-USD.qif (Investment account format - both currencies)
-        - output/My-Investment-CAD.qif (Investment account format - both currencies)
-        - output/My-US-Saving-USD.qif (Bank account format - USD only, matches account suffix)
-        - output/My-Chequeing-CAD.qif (Bank account format - CAD only, matches account suffix)
+        - output/My-Investment-CAD.qif (Investment account format - CAD transactions)
+        - output/My-Investment-USD.qif (Investment account format - USD transactions)
+        - output/My-US-Saving.qif (Bank account format - USD only)
+        - output/My-Chequeing.qif (Bank account format - CAD only)
 
     Processing Flow:
-        1. Tool reads base account names from accounts.yml (e.g., 'AB1234567CAD')
-        2. Internally processes currency-suffixed accounts (e.g., 'AB1234567CAD-USD')
-        3. For Investment accounts: Generates output files for both currencies
-        4. For Checking accounts: Only generates output for currency matching account suffix
-        5. Output files use nickname + currency suffix format
-
-    Currency Matching Rules:
-        - Investment accounts: Process both USD and CAD transactions regardless of account suffix
-        - Checking accounts: Only process transactions matching the account's currency suffix
-          * CD9876543USD (Checking) → Only USD transactions
-          * EF5555555CAD (Checking) → Only CAD transactions
+        1. Tool reads account names with currency suffixes from accounts.yml (e.g., 'AB1234567CAD-CAD')
+        2. Processes currency-suffixed accounts directly (e.g., 'AB1234567CAD-USD')
+        3. Each account entry corresponds to one output QIF file
+        4. Output files use the configured nickname
 
     QIF Headers:
         - Investment accounts: '!Type:Invst'
         - Checking accounts: '!Type:Bank'
 
     Raises:
-        ValueError: If account name from CSV is not found in configuration file.
+        ValueError: If account name from CSV is not found in configuration file, or if there's a currency mismatch for chequing accounts.
 
     Note:
         - Skips accounts with no transactions (empty lists)
         - Creates output directory if it doesn't exist
         - Overwrites existing QIF files with same names
+        - For chequing accounts, validates that the account currency suffix matches the expected currency
     """
 
     config = read_config(config_filename)
@@ -350,10 +347,36 @@ def export_qif_files(account_data, config_filename):
         if account_name not in config:
             raise ValueError("Unknown account")
 
-        if config[account_name]['type'] == "Checking":
-            transactions.insert(0, '!Type:Bank');
+        account_config = config[account_name]
+        account_type = account_config['type']
+
+        # For chequing accounts, validate currency mismatch
+        if account_type == "Checking":
+            # Extract currency suffix from account name (e.g., 'WK23MTV36CAD-CAD' -> 'CAD')
+            if '-' in account_name:
+                account_currency_suffix = account_name.split('-')[-1]
+                # Extract base account name (e.g., 'WK23MTV36CAD-CAD' -> 'WK23MTV36CAD')
+                base_account_name = account_name.rsplit('-', 1)[0]
+
+                # Determine expected currency from base account name
+                # If base account ends with 'CAD', expect CAD; if ends with 'USD', expect USD
+                if base_account_name.endswith('CAD'):
+                    expected_currency = 'CAD'
+                elif base_account_name.endswith('USD'):
+                    expected_currency = 'USD'
+                else:
+                    # Default to CAD if unclear
+                    expected_currency = 'CAD'
+
+                # Check for currency mismatch
+                if account_currency_suffix != expected_currency:
+                    raise ValueError(f"Currency mismatch for chequing account '{account_name}': "
+                                   f"account suffix indicates '{account_currency_suffix}' but expected '{expected_currency}' "
+                                   f"based on account base name '{base_account_name}'")
+
+            transactions.insert(0, '!Type:Bank')
         else:
-            transactions.insert(0, '!Type:Invst');
+            transactions.insert(0, '!Type:Invst')
 
         qif_content = '\n'.join(transactions) + '\n'
 

@@ -1,6 +1,12 @@
-H12345678CAD:
-  nickname: My-TFSA
+H12345678CAD-CAD:
+  nickname: My-TFSA-CAD
   type: Investment
-WK1234567CAD:
-  nickname: My-Cash
+H12345678CAD-USD:
+  nickname: My-TFSA-USD
+  type: Investment
+WK1234567CAD-CAD:
+  nickname: My-Chequeing
+  type: Checking
+XY1234567USD-USD:
+  nickname: My-US-Saving
   type: Checking
