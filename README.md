@@ -102,7 +102,7 @@ pip install .
 pip install -e .
 
 # Install development dependencies
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 ### Method 3: Direct from Git

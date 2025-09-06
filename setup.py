@@ -15,7 +15,6 @@ setup(
             'flake8>=6.0.0',
             'black>=23.0.0',
             'isort>=5.12.0',
-            'tox>=4.0.0',
         ],
         'test': [
             'pytest>=7.0.0',
