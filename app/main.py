@@ -138,7 +138,7 @@ def extract_unit(input_string):
     Note:
         Expected format is '{SYMBOL} - {NUMBER} shares'
     """
-    pattern = r'(\d+\.\d+) shares'
+    pattern = r'(\d+\.\d+)\s+shares'
     match = re.search(pattern, input_string)
     if match:
         return float(match.group(1))

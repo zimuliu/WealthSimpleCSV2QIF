@@ -1,7 +1,7 @@
 import unittest
 
 from unittest.mock import patch, mock_open
-from app.main import read_csv_files, extract_account_name, read_config, extract_option_info
+from app.main import read_csv_files, extract_account_name, read_config, extract_option_info, extract_unit
 
 class TestMain(unittest.TestCase):
     def test_extract_account_name_valid_format(self):
@@ -323,6 +323,218 @@ class TestMain(unittest.TestCase):
         self.assertEqual(option_name, "AAPL 180.00 USD PUT 2025-07-30")
         self.assertEqual(contracts, 1)
         self.assertEqual(fee, 0.75)
+
+    def test_extract_unit_valid_descriptions(self):
+        """Test extract_unit with valid stock transaction descriptions"""
+        # Test with standard format - integer shares
+        description = "AAPL - 10.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 10.0)
+
+        # Test with fractional shares
+        description = "TSLA - 5.5 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 5.5)
+
+        # Test with single share
+        description = "SHOP - 1.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 1.0)
+
+        # Test with large number of shares
+        description = "NVDA - 100.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 100.0)
+
+        # Test with high precision fractional shares
+        description = "GOOGL - 2.25 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 2.25)
+
+    def test_extract_unit_different_decimal_formats(self):
+        """Test extract_unit with different decimal formats"""
+        # Test with multiple decimal places
+        description = "AAPL - 15.123 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 15.123)
+
+        # Test with many decimal places
+        description = "MSFT - 7.123456 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 7.123456)
+
+        # Test with zero decimal
+        description = "AMZN - 3.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 3.0)
+
+        # Test with small fractional amount
+        description = "BRK.B - 0.5 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 0.5)
+
+        # Test with very small fractional amount
+        description = "EXPENSIVE - 0.001 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 0.001)
+
+    def test_extract_unit_different_symbols(self):
+        """Test extract_unit with different stock symbols"""
+        # Test with simple symbol
+        description = "A - 5.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 5.0)
+
+        # Test with symbol containing dots
+        description = "BRK.B - 2.5 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 2.5)
+
+        # Test with longer symbol
+        description = "BERKSHIRE - 1.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 1.0)
+
+        # Test with numeric-like symbol
+        description = "3M - 8.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 8.0)
+
+    def test_extract_unit_whitespace_variations(self):
+        """Test extract_unit with various whitespace scenarios"""
+        # Test with extra spaces around dash
+        description = "AAPL  -  10.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 10.0)
+
+        # Test with leading/trailing whitespace
+        description = "  TSLA - 5.0 shares  "
+        result = extract_unit(description)
+        self.assertEqual(result, 5.0)
+
+        # Test with extra spaces before shares
+        description = "NVDA - 15.0  shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 15.0)
+
+        # Test with tabs or other whitespace
+        description = "SHOP\t-\t3.0\tshares"
+        result = extract_unit(description)
+        self.assertEqual(result, 3.0)
+
+    def test_extract_unit_edge_cases(self):
+        """Test extract_unit with edge cases and invalid inputs"""
+        # Test with None input - this will raise TypeError as the function doesn't handle None
+        with self.assertRaises(TypeError):
+            extract_unit(None)
+
+        # Test with empty string
+        result = extract_unit("")
+        self.assertIsNone(result)
+
+        # Test with string that doesn't contain shares pattern
+        description = "AAPL - some other text"
+        result = extract_unit(description)
+        self.assertIsNone(result)
+
+        # Test with shares word but no number
+        description = "AAPL - shares"
+        result = extract_unit(description)
+        self.assertIsNone(result)
+
+        # Test with number but no shares word
+        description = "AAPL - 10.0 contracts"
+        result = extract_unit(description)
+        self.assertIsNone(result)
+
+    def test_extract_unit_malformed_descriptions(self):
+        """Test extract_unit with malformed descriptions"""
+        # Test with integer instead of decimal format
+        description = "AAPL - 10 shares"
+        result = extract_unit(description)
+        self.assertIsNone(result)  # Function expects decimal format (e.g., 10.0)
+
+        # Test with missing dash
+        description = "AAPL 10.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 10.0)  # Should still work as regex looks for pattern anywhere
+
+
+        # Test with shares in different case
+        description = "AAPL - 10.0 SHARES"
+        result = extract_unit(description)
+        self.assertIsNone(result)  # Function is case-sensitive
+
+        # Test with plural vs singular
+        description = "AAPL - 1.0 share"
+        result = extract_unit(description)
+        self.assertIsNone(result)  # Function expects "shares" not "share"
+
+    def test_extract_unit_complex_descriptions(self):
+        """Test extract_unit with complex transaction descriptions"""
+        # Test with additional text before shares
+        description = "AAPL - Purchase of 10.0 shares at market price"
+        result = extract_unit(description)
+        self.assertEqual(result, 10.0)
+
+        # Test with additional text after shares
+        description = "TSLA - 5.0 shares (executed at 2025-07-15)"
+        result = extract_unit(description)
+        self.assertEqual(result, 5.0)
+
+        # Test with currency information
+        description = "SHOP - 15.0 shares in CAD"
+        result = extract_unit(description)
+        self.assertEqual(result, 15.0)
+
+        # Test with price information
+        description = "NVDA - 2.5 shares at $500.00 per share"
+        result = extract_unit(description)
+        self.assertEqual(result, 2.5)
+
+    def test_extract_unit_boundary_values(self):
+        """Test extract_unit with boundary and extreme values"""
+        # Test with very large number
+        description = "PENNY - 999999.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 999999.0)
+
+        # Test with very small number
+        description = "EXPENSIVE - 0.000001 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 0.000001)
+
+        # Test with zero shares (edge case)
+        description = "TEST - 0.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 0.0)
+
+        # Test with single digit decimal
+        description = "SIMPLE - 9.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 9.0)
+
+    def test_extract_unit_special_characters_in_symbol(self):
+        """Test extract_unit with special characters in stock symbols"""
+        # Test with dot in symbol
+        description = "BRK.A - 1.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 1.0)
+
+        # Test with hyphen in symbol (though this might be rare)
+        description = "SOME-STOCK - 5.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 5.0)
+
+        # Test with numbers in symbol
+        description = "STOCK123 - 10.0 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 10.0)
+
+        # Test with underscore in symbol
+        description = "STOCK_A - 7.5 shares"
+        result = extract_unit(description)
+        self.assertEqual(result, 7.5)
 
 if __name__ == '__main__':
     unittest.main()
