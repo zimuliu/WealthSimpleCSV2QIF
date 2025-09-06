@@ -1,4 +1,7 @@
 import unittest
+import tempfile
+import os
+import yaml
 
 from unittest.mock import patch, mock_open
 from app.main import read_csv_files, extract_account_name, read_config, extract_option_info, extract_unit, extract_symbol, generate_qif_entry
@@ -1051,6 +1054,292 @@ class TestMain(unittest.TestCase):
         result = generate_qif_entry(row, 'USD')
         expected = 'D2025-08-20\nNSell\nYAMZN-CT\nI3600.0\nQ1.0\nT3600.0\nO0.00\nCc\n^'
         self.assertEqual(result, expected)
+
+    # Tests for read_config function
+    def test_read_config_valid_yaml_file(self):
+        """Test read_config with valid YAML configuration file"""
+        # Create a temporary YAML file with valid configuration matching actual format
+        config_data = {
+            'H12345678CAD-CAD': {
+                'nickname': 'My-TFSA',
+                'type': 'Investment'
+            },
+            'WK23MTV36CAD-CAD': {
+                'nickname': 'My-Chequeing',
+                'type': 'Checking'
+            },
+            'WK5DRT238USD-USD': {
+                'nickname': 'My-USD-Saving',
+                'type': 'Checking'
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+            yaml.dump(config_data, temp_file)
+            temp_file_path = temp_file.name
+
+        try:
+            result = read_config(temp_file_path)
+            self.assertEqual(result, config_data)
+
+            # Verify specific account configurations
+            self.assertIn('H12345678CAD-CAD', result)
+            self.assertEqual(result['H12345678CAD-CAD']['nickname'], 'My-TFSA')
+            self.assertEqual(result['H12345678CAD-CAD']['type'], 'Investment')
+
+            self.assertIn('WK23MTV36CAD-CAD', result)
+            self.assertEqual(result['WK23MTV36CAD-CAD']['nickname'], 'My-Chequeing')
+            self.assertEqual(result['WK23MTV36CAD-CAD']['type'], 'Checking')
+
+            self.assertIn('WK5DRT238USD-USD', result)
+            self.assertEqual(result['WK5DRT238USD-USD']['nickname'], 'My-USD-Saving')
+            self.assertEqual(result['WK5DRT238USD-USD']['type'], 'Checking')
+        finally:
+            os.unlink(temp_file_path)
+
+    def test_read_config_empty_yaml_file(self):
+        """Test read_config with empty YAML file"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+            temp_file.write('')  # Empty file
+            temp_file_path = temp_file.name
+
+        try:
+            result = read_config(temp_file_path)
+            self.assertIsNone(result)  # Empty YAML file returns None
+        finally:
+            os.unlink(temp_file_path)
+
+    def test_read_config_yaml_with_comments(self):
+        """Test read_config with YAML file containing comments"""
+        yaml_content = """
+# Account configuration file
+# Investment accounts
+H12345678CAD-CAD:
+  nickname: My-TFSA  # Tax-Free Savings Account
+  type: Investment
+
+# Checking accounts
+WK23MTV36CAD-CAD:
+  nickname: My-Chequeing
+  type: Checking
+"""
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+            temp_file.write(yaml_content)
+            temp_file_path = temp_file.name
+
+        try:
+            result = read_config(temp_file_path)
+
+            # Comments should be ignored, only data should be parsed
+            self.assertEqual(len(result), 2)
+            self.assertIn('H12345678CAD-CAD', result)
+            self.assertIn('WK23MTV36CAD-CAD', result)
+            self.assertEqual(result['H12345678CAD-CAD']['nickname'], 'My-TFSA')
+            self.assertEqual(result['WK23MTV36CAD-CAD']['type'], 'Checking')
+        finally:
+            os.unlink(temp_file_path)
+
+    def test_read_config_multiple_account_types(self):
+        """Test read_config with multiple Investment and Checking accounts"""
+        config_data = {
+            'H16530307CAD-USD': {
+                'nickname': 'My-Unregistered-USD',
+                'type': 'Investment'
+            },
+            'H16530307CAD-CAD': {
+                'nickname': 'My-Unregistered-CAD',
+                'type': 'Investment'
+            },
+            'HQ8KJW805CAD-USD': {
+                'nickname': 'My-Option-Trading',
+                'type': 'Investment'
+            },
+            'WK23MTV36CAD-CAD': {
+                'nickname': 'My-Chequeing',
+                'type': 'Checking'
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+            yaml.dump(config_data, temp_file)
+            temp_file_path = temp_file.name
+
+        try:
+            result = read_config(temp_file_path)
+            self.assertEqual(result, config_data)
+
+            # Verify all accounts are loaded correctly
+            self.assertEqual(len(result), 4)
+
+            # Check Investment accounts
+            investment_accounts = [k for k, v in result.items() if v['type'] == 'Investment']
+            self.assertEqual(len(investment_accounts), 3)
+
+            # Check Checking accounts
+            checking_accounts = [k for k, v in result.items() if v['type'] == 'Checking']
+            self.assertEqual(len(checking_accounts), 1)
+        finally:
+            os.unlink(temp_file_path)
+
+    def test_read_config_yaml_with_special_characters_in_nicknames(self):
+        """Test read_config with YAML containing special characters in nicknames"""
+        config_data = {
+            'SPECIAL-ACCOUNT-123': {
+                'nickname': 'My-Special_Account.Test',
+                'type': 'Investment'
+            },
+            'TEST-ACCOUNT-456': {
+                'nickname': 'Test-Account-With-Dashes',
+                'type': 'Checking'
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False, encoding='utf-8') as temp_file:
+            yaml.dump(config_data, temp_file, allow_unicode=True)
+            temp_file_path = temp_file.name
+
+        try:
+            result = read_config(temp_file_path)
+            self.assertEqual(result, config_data)
+
+            # Verify special characters in nicknames are preserved
+            self.assertEqual(result['SPECIAL-ACCOUNT-123']['nickname'], 'My-Special_Account.Test')
+            self.assertEqual(result['TEST-ACCOUNT-456']['nickname'], 'Test-Account-With-Dashes')
+        finally:
+            os.unlink(temp_file_path)
+
+    def test_read_config_file_not_found(self):
+        """Test read_config with non-existent file"""
+        non_existent_file = '/path/that/does/not/exist/config.yml'
+
+        with self.assertRaises(FileNotFoundError):
+            read_config(non_existent_file)
+
+    def test_read_config_invalid_yaml_syntax(self):
+        """Test read_config with invalid YAML syntax"""
+        invalid_yaml_content = """
+H12345678CAD-CAD:
+  nickname: My-TFSA
+  type: Investment
+    invalid_indentation: true
+WK23MTV36CAD-CAD
+  missing_colon_here
+    nickname: My-Chequeing
+"""
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+            temp_file.write(invalid_yaml_content)
+            temp_file_path = temp_file.name
+
+        try:
+            with self.assertRaises(yaml.YAMLError):
+                read_config(temp_file_path)
+        finally:
+            os.unlink(temp_file_path)
+
+    def test_read_config_missing_required_fields(self):
+        """Test read_config with YAML missing required fields"""
+        # Test with missing 'type' field
+        config_data = {
+            'INCOMPLETE-ACCOUNT': {
+                'nickname': 'Missing-Type-Field'
+                # Missing 'type' field
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+            yaml.dump(config_data, temp_file)
+            temp_file_path = temp_file.name
+
+        try:
+            result = read_config(temp_file_path)
+            # Function should still return the data, validation happens elsewhere
+            self.assertEqual(result, config_data)
+            self.assertNotIn('type', result['INCOMPLETE-ACCOUNT'])
+        finally:
+            os.unlink(temp_file_path)
+
+    def test_read_config_invalid_account_types(self):
+        """Test read_config with invalid account types"""
+        config_data = {
+            'INVALID-TYPE-ACCOUNT': {
+                'nickname': 'Invalid-Type-Test',
+                'type': 'InvalidType'  # Should be 'Investment' or 'Checking'
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+            yaml.dump(config_data, temp_file)
+            temp_file_path = temp_file.name
+
+        try:
+            result = read_config(temp_file_path)
+            # Function should still return the data, validation happens elsewhere
+            self.assertEqual(result, config_data)
+            self.assertEqual(result['INVALID-TYPE-ACCOUNT']['type'], 'InvalidType')
+        finally:
+            os.unlink(temp_file_path)
+
+    def test_read_config_large_yaml_file(self):
+        """Test read_config with a large YAML file"""
+        # Generate a large configuration with many accounts
+        config_data = {}
+        for i in range(50):
+            account_id = f'ACCOUNT{i:03d}CAD-CAD'
+            config_data[account_id] = {
+                'nickname': f'Test-Account-{i}',
+                'type': 'Investment' if i % 2 == 0 else 'Checking'
+            }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+            yaml.dump(config_data, temp_file)
+            temp_file_path = temp_file.name
+
+        try:
+            result = read_config(temp_file_path)
+            self.assertEqual(result, config_data)
+            self.assertEqual(len(result), 50)
+
+            # Verify a few random entries
+            self.assertEqual(result['ACCOUNT000CAD-CAD']['nickname'], 'Test-Account-0')
+            self.assertEqual(result['ACCOUNT000CAD-CAD']['type'], 'Investment')
+            self.assertEqual(result['ACCOUNT001CAD-CAD']['type'], 'Checking')
+        finally:
+            os.unlink(temp_file_path)
+
+    @patch('builtins.open', side_effect=IOError("Disk full"))
+    def test_read_config_io_error(self, mock_open):
+        """Test read_config with I/O error during file reading"""
+        with self.assertRaises(IOError):
+            read_config('some_file.yml')
+
+    def test_read_config_actual_accounts_file(self):
+        """Test read_config with the actual accounts.yml file if it exists"""
+        # This test uses the real accounts.yml file in the project
+        if os.path.exists('accounts.yml'):
+            result = read_config('accounts.yml')
+
+            # Verify the structure matches expected format
+            self.assertIsInstance(result, dict)
+
+            # Check that all accounts have required fields
+            for account_id, account_config in result.items():
+                self.assertIn('nickname', account_config)
+                self.assertIn('type', account_config)
+                self.assertIsInstance(account_config['nickname'], str)
+                self.assertIn(account_config['type'], ['Investment', 'Checking'])
+
+                # Verify account ID format (should end with -CAD or -USD)
+                self.assertTrue(account_id.endswith('-CAD') or account_id.endswith('-USD'))
+
+                # Verify only expected fields are present
+                expected_fields = {'nickname', 'type'}
+                actual_fields = set(account_config.keys())
+                self.assertEqual(actual_fields, expected_fields,
+                               f"Account {account_id} has unexpected fields: {actual_fields - expected_fields}")
+        else:
+            self.skipTest("accounts.yml file not found in project directory")
 
 if __name__ == '__main__':
     unittest.main()
