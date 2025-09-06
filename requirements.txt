@@ -1,1 +1,4 @@
 pyyaml
+coverage
+pytest
+pytest-cov

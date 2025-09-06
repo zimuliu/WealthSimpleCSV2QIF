@@ -3,6 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
 [![PyYAML](https://img.shields.io/badge/dependency-PyYAML-green.svg)](https://pyyaml.org/)
+[![Tests](https://github.com/zimuliu/WealthSimpleCSV2QIF/workflows/Tests%20and%20Coverage/badge.svg)](https://github.com/zimuliu/WealthSimpleCSV2QIF/actions)
+[![codecov](https://codecov.io/gh/zimuliu/WealthSimpleCSV2QIF/branch/main/graph/badge.svg)](https://codecov.io/gh/zimuliu/WealthSimpleCSV2QIF)
+[![Coverage Status](https://coveralls.io/repos/github/zimuliu/WealthSimpleCSV2QIF/badge.svg?branch=main)](https://coveralls.io/github/zimuliu/WealthSimpleCSV2QIF?branch=main)
 
 Convert WealthSimple Trade/Cash CSV exports to QIF format for seamless import into financial software like Quicken, GnuCash, or other accounting applications.
 
@@ -719,10 +722,85 @@ source venv/bin/activate  # or venv\Scripts\activate on Windows
 pip install -e .
 
 # Install development dependencies
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
-### Running Tests
+## Testing
+
+### Quick Start
+
+```bash
+# Activate virtual environment (required)
+source .venv/bin/activate  # or source venv/bin/activate
+
+# Install test dependencies
+make install
+
+# Run tests with coverage
+make coverage
+
+# Generate HTML coverage report
+make coverage-html
+
+# View coverage report in browser
+make coverage-report
+```
+
+**Important**: Always activate your virtual environment before running tests to ensure the correct Python interpreter and dependencies are used.
+
+### Test Commands
+
+#### Using Make (Recommended)
+
+```bash
+# Run all tests
+make test
+
+# Run tests with verbose output
+make test-verbose
+
+# Run tests with coverage report
+make coverage
+
+# Generate HTML coverage report
+make coverage-html
+
+# Open coverage report in browser
+make coverage-report
+
+# Run all quality checks (tests, linting, formatting)
+make all-checks
+
+# Clean up generated files
+make clean
+```
+
+#### Using pytest directly
+
+```bash
+# Run all tests
+python -m pytest
+
+# Run tests with coverage
+python -m pytest --cov=app
+
+# Run tests with HTML coverage report
+python -m pytest --cov=app --cov-report=html
+
+# Run specific test file
+python -m pytest tests/test_main.py
+
+# Run specific test method
+python -m pytest tests/test_main.py::TestMain::test_extract_account_name_valid_format
+
+# Run tests with verbose output
+python -m pytest -v
+
+# Run tests and stop on first failure
+python -m pytest -x
+```
+
+#### Using unittest (Legacy)
 
 ```bash
 # Run all tests
@@ -733,6 +811,230 @@ python -m unittest tests.test_main
 
 # Run with verbose output
 python -m unittest discover tests -v
+```
+
+### Test Coverage
+
+The project uses `pytest-cov` for test coverage reporting. Coverage configuration is defined in `.coveragerc`.
+
+#### Coverage Targets
+- **Minimum Coverage**: 80% (configured in `pytest.ini`)
+- **Source Code**: `app/` directory
+- **Excluded**: Test files, setup files, virtual environments
+
+#### Coverage Reports
+
+**Terminal Report:**
+```bash
+make coverage
+```
+
+**HTML Report:**
+```bash
+make coverage-html
+# Opens htmlcov/index.html
+```
+
+**XML Report (for CI/CD):**
+```bash
+python -m pytest --cov=app --cov-report=xml
+# Generates coverage.xml
+```
+
+### Test Structure
+
+```
+tests/
+├── __init__.py
+└── test_main.py          # Comprehensive unit tests
+```
+
+#### Test Categories
+
+The test suite includes:
+
+- **Unit Tests**: Test individual functions and methods
+- **Integration Tests**: Test component interactions
+- **Edge Case Tests**: Test boundary conditions and error handling
+- **Data Validation Tests**: Test CSV parsing and QIF generation
+
+#### Key Test Areas
+
+1. **CSV File Processing**
+   - File name parsing
+   - CSV content reading
+   - Multi-currency handling
+
+2. **Transaction Processing**
+   - Stock transactions (BUY/SELL)
+   - Options trading (BUYTOOPEN/SELLTOCLOSE)
+   - Cash transactions (deposits, withdrawals)
+   - Dividend payments
+
+3. **QIF Generation**
+   - Investment account format
+   - Checking account format
+   - Symbol mapping (CDR vs regular)
+   - Currency separation
+
+4. **Configuration Management**
+   - YAML file parsing
+   - Account mapping validation
+   - Error handling
+
+### Code Quality
+
+#### Linting and Formatting
+
+```bash
+# Check code style
+make lint
+
+# Format code
+make format
+
+# Check formatting without changes
+make check-format
+
+# Run type checking (if mypy installed)
+make type-check
+```
+
+#### Pre-commit Hooks
+
+Install pre-commit hooks for automatic code quality checks:
+
+```bash
+# Install pre-commit
+pip install pre-commit
+
+# Install hooks
+pre-commit install
+
+# Run hooks manually
+pre-commit run --all-files
+```
+
+### Continuous Integration
+
+The project is configured for CI/CD with automated testing and coverage reporting on GitHub.
+
+#### GitHub Actions Workflow
+
+The project includes a comprehensive GitHub Actions workflow (`.github/workflows/test.yml`) that:
+
+- **Multi-Python Testing**: Tests across Python 3.8, 3.9, 3.10, 3.11, and 3.12
+- **Automated Linting**: Runs flake8 code quality checks
+- **Coverage Reporting**: Generates and uploads coverage reports
+- **Pull Request Comments**: Adds coverage comments to pull requests
+
+#### Coverage Integration
+
+The workflow automatically uploads coverage reports to multiple services:
+
+1. **Codecov**: Provides detailed coverage analysis and trends
+2. **Coveralls**: Alternative coverage reporting service
+3. **GitHub Comments**: Adds coverage summaries to pull requests
+
+#### Configuration Files
+
+- `pytest.ini`: Test configuration and coverage settings
+- `.coveragerc`: Coverage measurement configuration
+- `requirements-dev.txt`: Development dependencies
+- `Makefile`: Local automation commands
+- `.github/workflows/test.yml`: GitHub Actions CI/CD pipeline
+
+#### Setting Up Coverage Services
+
+To enable coverage reporting on your fork:
+
+1. **Codecov Setup**:
+   - Visit [codecov.io](https://codecov.io) and sign in with GitHub
+   - Add your repository to enable coverage reporting
+   - No additional configuration needed (uses GitHub Actions integration)
+
+2. **Coveralls Setup**:
+   - Visit [coveralls.io](https://coveralls.io) and sign in with GitHub
+   - Add your repository to enable coverage reporting
+   - No additional configuration needed (uses GitHub token)
+
+#### Viewing Coverage Reports
+
+- **GitHub Actions**: View test results and coverage in the Actions tab
+- **Codecov**: Detailed coverage reports at `https://codecov.io/gh/username/WealthSimpleCSV2QIF`
+- **Coveralls**: Coverage trends at `https://coveralls.io/github/username/WealthSimpleCSV2QIF`
+- **Pull Requests**: Automatic coverage comments on PRs showing changes
+
+#### Local CI Testing
+
+Test the CI pipeline locally:
+
+```bash
+# Run the same checks as CI
+make all-checks
+
+# Generate coverage report
+make coverage-html
+
+# View coverage report
+make coverage-report
+```
+
+### Running Tests in Different Environments
+
+#### Using tox (Multi-Python Testing)
+
+```bash
+# Install tox
+pip install tox
+
+# Run tests across multiple Python versions
+tox
+
+# Run tests for specific Python version
+tox -e py39
+```
+
+#### Using Docker
+
+```bash
+# Build test image
+docker build -t ws-csv-to-qif-test .
+
+# Run tests in container
+docker run --rm ws-csv-to-qif-test make test
+```
+
+### Troubleshooting Tests
+
+#### Common Issues
+
+**Import Errors:**
+```bash
+# Ensure app is in Python path
+pip install -e .
+```
+
+**Coverage Not Working:**
+```bash
+# Reinstall coverage tools
+pip install --upgrade pytest-cov coverage
+```
+
+**Tests Not Found:**
+```bash
+# Check test discovery
+python -m pytest --collect-only
+```
+
+#### Debug Mode
+
+```bash
+# Run tests with debug output
+python -m pytest -s -vv
+
+# Run specific test with pdb
+python -m pytest --pdb tests/test_main.py::TestMain::test_specific_function
 ```
 
 ### Code Structure
