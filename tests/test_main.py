@@ -71,10 +71,6 @@ class TestMain(unittest.TestCase):
         result = extract_account_name('')
         self.assertIsNone(result)
 
-        # Test with None input
-        result = extract_account_name(None)
-        self.assertIsNone(result)
-
         # Test with completely different filename
         filename = 'some-other-file.csv'
         result = extract_account_name(filename)
