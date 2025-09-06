@@ -1341,5 +1341,307 @@ WK23MTV36CAD-CAD
         else:
             self.skipTest("accounts.yml file not found in project directory")
 
+    # Tests for read_csv_files function
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_multiple_files(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with multiple CSV files"""
+        # Mock directory listing with multiple CSV files
+        mock_listdir.return_value = [
+            'monthly-statement-transactions-ACCOUNT1-2025-07-01.csv',
+            'monthly-statement-transactions-ACCOUNT2-2025-06-30.csv',
+            'other-file.txt'  # Should be ignored
+        ]
+
+        # Mock CSV content for first file
+        csv_content1 = 'date,transaction,description,amount,currency\n2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD\n2025-07-02,SELL,TSLA - 5.0 shares,1000.00,CAD\n'
+        # Mock CSV content for second file
+        csv_content2 = 'date,transaction,description,amount,currency\n2025-06-30,DIV,MSFT - Dividend payment,25.50,USD\n'
+
+        # Configure mock to return different content based on file path
+        def mock_open_side_effect(file_path, mode='r'):
+            if 'ACCOUNT1' in file_path:
+                return mock_open(read_data=csv_content1).return_value
+            elif 'ACCOUNT2' in file_path:
+                return mock_open(read_data=csv_content2).return_value
+            else:
+                return mock_open(read_data='').return_value
+
+        mock_open_file.side_effect = mock_open_side_effect
+
+        result = read_csv_files('test_input_folder')
+
+        # Should have 4 accounts (2 files × 2 currencies each)
+        expected_accounts = ['ACCOUNT1-USD', 'ACCOUNT1-CAD', 'ACCOUNT2-USD', 'ACCOUNT2-CAD']
+        self.assertEqual(set(result.keys()), set(expected_accounts))
+
+        # ACCOUNT1-USD should have 1 transaction (AAPL BUY)
+        self.assertEqual(len(result['ACCOUNT1-USD']), 1)
+        self.assertIn('AAPL-CT', result['ACCOUNT1-USD'][0])
+
+        # ACCOUNT1-CAD should have 1 transaction (TSLA SELL)
+        self.assertEqual(len(result['ACCOUNT1-CAD']), 1)
+        self.assertIn('TSLA-QH', result['ACCOUNT1-CAD'][0])  # TSLA is CDR in CAD
+
+        # ACCOUNT2-USD should have 1 transaction (MSFT DIV)
+        self.assertEqual(len(result['ACCOUNT2-USD']), 1)
+        self.assertIn('MSFT-CT', result['ACCOUNT2-USD'][0])
+
+        # ACCOUNT2-CAD should be empty
+        self.assertEqual(len(result['ACCOUNT2-CAD']), 0)
+
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_empty_directory(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with empty directory"""
+        mock_listdir.return_value = []
+
+        result = read_csv_files('empty_folder')
+
+        self.assertEqual(result, {})
+
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_no_csv_files(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with directory containing no CSV files"""
+        mock_listdir.return_value = ['file1.txt', 'file2.pdf', 'readme.md']
+
+        result = read_csv_files('no_csv_folder')
+
+        self.assertEqual(result, {})
+
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_invalid_filename_format(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with CSV files that don't match expected format"""
+        mock_listdir.return_value = [
+            'invalid-format.csv',
+            'monthly-statement-transactions-INVALID.csv',  # Missing date
+            'daily-statement-transactions-ACCOUNT1-2025-07-01.csv'  # Wrong prefix
+        ]
+
+        result = read_csv_files('invalid_folder')
+
+        # Should be empty since no files match the expected format
+        # Note: extract_account_name returns None for invalid formats, which creates 'None-USD' and 'None-CAD' keys
+        # But since the files don't match the pattern, they won't be processed, so these should be empty
+        expected_keys = {'None-USD', 'None-CAD'}
+        self.assertEqual(set(result.keys()), expected_keys)
+        self.assertEqual(len(result['None-USD']), 0)
+        self.assertEqual(len(result['None-CAD']), 0)
+
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_mixed_currencies_single_file(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with single file containing mixed currency transactions"""
+        mock_listdir.return_value = ['monthly-statement-transactions-MIXED123-2025-07-01.csv']
+
+        csv_content = '''date,transaction,description,amount,currency
+2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD
+2025-07-02,BUY,SHOP - 5.0 shares,-750.00,CAD
+2025-07-03,SELL,MSFT - 8.0 shares,2400.00,USD
+2025-07-04,DIV,TD - Dividend payment,15.75,CAD
+2025-07-05,CONT,Contribution,1000.0,CAD'''
+
+        # The function reads the same file multiple times (once for each currency)
+        # We need to configure the mock to return fresh content each time it's opened
+        def mock_open_side_effect(*args, **kwargs):
+            return mock_open(read_data=csv_content).return_value
+
+        mock_open_file.side_effect = mock_open_side_effect
+
+        result = read_csv_files('mixed_folder')
+
+        # Should have 2 accounts (USD and CAD)
+        self.assertIn('MIXED123-USD', result)
+        self.assertIn('MIXED123-CAD', result)
+
+        # USD account should have 2 transactions (AAPL BUY, MSFT SELL)
+        self.assertEqual(len(result['MIXED123-USD']), 2)
+
+        # CAD account should have 3 transactions (SHOP BUY, TD DIV, CONT)
+        self.assertEqual(len(result['MIXED123-CAD']), 3)
+
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_empty_csv_file(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with empty CSV file"""
+        mock_listdir.return_value = ['monthly-statement-transactions-EMPTY123-2025-07-01.csv']
+
+        # CSV with only headers
+        csv_content = 'date,transaction,description,amount,currency\n'
+        mock_open_file.return_value = mock_open(read_data=csv_content).return_value
+
+        result = read_csv_files('empty_csv_folder')
+
+        # Should have both currency accounts but they should be empty
+        self.assertIn('EMPTY123-USD', result)
+        self.assertIn('EMPTY123-CAD', result)
+        self.assertEqual(len(result['EMPTY123-USD']), 0)
+        self.assertEqual(len(result['EMPTY123-CAD']), 0)
+
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_ignored_transactions(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with transactions that should be ignored"""
+        mock_listdir.return_value = ['monthly-statement-transactions-IGNORE123-2025-07-01.csv']
+
+        csv_content = '''date,transaction,description,amount,currency
+2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD
+2025-07-02,RECALL,Stock recall transaction,0.00,USD
+2025-07-03,LOAN,Stock loan transaction,100.00,USD
+2025-07-04,STKDIS,Stock distribution,50.00,USD
+2025-07-05,STKREORG,Stock reorganization,0.00,USD
+2025-07-06,SELL,MSFT - 5.0 shares,1000.00,USD'''
+
+        mock_open_file.return_value = mock_open(read_data=csv_content).return_value
+
+        result = read_csv_files('ignore_folder')
+
+        # Should only have 2 transactions (BUY and SELL), ignored transactions should not appear
+        self.assertEqual(len(result['IGNORE123-USD']), 2)
+        self.assertEqual(len(result['IGNORE123-CAD']), 0)
+
+        # Verify the transactions are the expected ones
+        usd_transactions = result['IGNORE123-USD']
+        self.assertIn('AAPL-CT', usd_transactions[0])
+        self.assertIn('MSFT-CT', usd_transactions[1])
+
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_options_transactions(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with options trading transactions"""
+        mock_listdir.return_value = ['monthly-statement-transactions-OPTIONS123-2025-07-01.csv']
+
+        csv_content = '''date,transaction,description,amount,currency
+2025-07-23,BUYTOOPEN,SPY 450.00 USD CALL 2025-07-25: Bought 2 contract (executed at 2025-07-23) Fee: $1.50,-320.50,USD
+2025-07-25,SELLTOCLOSE,AAPL 180.00 USD PUT 2025-07-30: Sold 1 contract (executed at 2025-07-25) Fee: $0.75,150.25,USD'''
+
+        mock_open_file.return_value = mock_open(read_data=csv_content).return_value
+
+        result = read_csv_files('options_folder')
+
+        # Should have 2 options transactions in USD account
+        self.assertEqual(len(result['OPTIONS123-USD']), 2)
+        self.assertEqual(len(result['OPTIONS123-CAD']), 0)
+
+        # Verify options symbols are preserved
+        usd_transactions = result['OPTIONS123-USD']
+        self.assertIn('SPY 450.00 USD CALL 2025-07-25', usd_transactions[0])
+        self.assertIn('AAPL 180.00 USD PUT 2025-07-30', usd_transactions[1])
+
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_various_transaction_types(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with various transaction types"""
+        mock_listdir.return_value = ['monthly-statement-transactions-VARIOUS123-2025-07-01.csv']
+
+        csv_content = '''date,transaction,description,amount,currency
+2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD
+2025-07-02,SELL,MSFT - 5.0 shares,1000.00,USD
+2025-07-03,DIV,GOOGL - Dividend payment,25.50,USD
+2025-07-04,CONT,Monthly contribution,500.0,USD
+2025-07-05,FPLINT,Stock lending interest payment,12.50,USD
+2025-07-06,NRT,US Non-Resident Tax Withholding,5.25,USD
+2025-07-07,TRFOUT,Transfer to external account,200.00,USD
+2025-07-08,CASHBACK,Credit card cashback,15.00,USD
+2025-07-09,EFT,Electronic funds transfer,300.00,USD
+2025-07-10,INT,Interest payment,8.50,USD'''
+
+        mock_open_file.return_value = mock_open(read_data=csv_content).return_value
+
+        result = read_csv_files('various_folder')
+
+        # Should have 10 transactions in USD account
+        self.assertEqual(len(result['VARIOUS123-USD']), 10)
+        self.assertEqual(len(result['VARIOUS123-CAD']), 0)
+
+        # Verify different transaction types are processed
+        usd_transactions = result['VARIOUS123-USD']
+        transaction_text = '\n'.join(usd_transactions)
+
+        # Check for different QIF transaction types
+        self.assertIn('NBuy', transaction_text)  # BUY
+        self.assertIn('NSell', transaction_text)  # SELL
+        self.assertIn('NDiv', transaction_text)  # DIV
+        self.assertIn('NXIn', transaction_text)  # CONT, FPLINT, CASHBACK, EFT, INT
+        self.assertIn('NXOut', transaction_text)  # NRT
+        self.assertIn('T-200.0', transaction_text)  # TRFOUT (negative amount)
+
+    @patch('os.listdir')
+    def test_read_csv_files_directory_not_found(self, mock_listdir):
+        """Test read_csv_files with non-existent directory"""
+        mock_listdir.side_effect = FileNotFoundError("Directory not found")
+
+        with self.assertRaises(FileNotFoundError):
+            read_csv_files('nonexistent_folder')
+
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_file_read_error(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with file read error"""
+        mock_listdir.return_value = ['monthly-statement-transactions-ERROR123-2025-07-01.csv']
+        mock_open_file.side_effect = IOError("Permission denied")
+
+        with self.assertRaises(IOError):
+            read_csv_files('error_folder')
+
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_malformed_csv(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with malformed CSV content"""
+        mock_listdir.return_value = ['monthly-statement-transactions-MALFORMED123-2025-07-01.csv']
+
+        # CSV with missing columns
+        csv_content = '''date,transaction,description
+2025-07-01,BUY,AAPL - 10.0 shares'''
+
+        mock_open_file.return_value = mock_open(read_data=csv_content).return_value
+
+        # Should raise KeyError when trying to access missing 'amount' or 'currency' columns
+        with self.assertRaises(KeyError):
+            read_csv_files('malformed_folder')
+
+    @patch('os.listdir')
+    @patch('builtins.open', new_callable=mock_open)
+    def test_read_csv_files_cdr_symbol_handling(self, mock_open_file, mock_listdir):
+        """Test read_csv_files with CDR symbols in different currencies"""
+        mock_listdir.return_value = ['monthly-statement-transactions-CDR123-2025-07-01.csv']
+
+        csv_content = '''date,transaction,description,amount,currency
+2025-07-01,BUY,TSLA - 5.0 shares,-1250.00,CAD
+2025-07-02,BUY,TSLA - 3.0 shares,-750.00,USD
+2025-07-03,BUY,AAPL - 10.0 shares,-1500.00,CAD
+2025-07-04,BUY,SHOP - 8.0 shares,-1200.00,CAD'''
+
+        # The function reads the same file multiple times, so we need to ensure the mock returns fresh content each time
+        def mock_open_side_effect(*args, **kwargs):
+            return mock_open(read_data=csv_content).return_value
+        mock_open_file.side_effect = mock_open_side_effect
+
+        result = read_csv_files('cdr_folder')
+
+        # Verify we have both currency accounts
+        self.assertIn('CDR123-CAD', result)
+        self.assertIn('CDR123-USD', result)
+
+        # Check that we have the expected number of transactions
+        self.assertEqual(len(result['CDR123-CAD']), 3)  # TSLA, AAPL, SHOP in CAD
+        self.assertEqual(len(result['CDR123-USD']), 1)   # TSLA in USD
+
+        # Check CDR symbol mapping
+        cad_transactions = '\n'.join(result['CDR123-CAD'])
+        usd_transactions = '\n'.join(result['CDR123-USD'])
+
+        # TSLA and AAPL in CAD should get -QH suffix (CDR)
+        self.assertIn('TSLA-QH', cad_transactions)
+        self.assertIn('AAPL-QH', cad_transactions)
+
+        # SHOP in CAD should get -CT suffix (not CDR)
+        self.assertIn('SHOP-CT', cad_transactions)
+
+        # TSLA in USD should get -CT suffix (not CDR when in USD)
+        self.assertIn('TSLA-CT', usd_transactions)
+
 if __name__ == '__main__':
     unittest.main()
