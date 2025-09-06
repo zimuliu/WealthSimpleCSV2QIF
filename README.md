@@ -1,6 +1,6 @@
 # WealthSimpleCSV2QIF
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
 [![PyYAML](https://img.shields.io/badge/dependency-PyYAML-green.svg)](https://pyyaml.org/)
 [![Tests](https://github.com/zimuliu/WealthSimpleCSV2QIF/workflows/Tests%20and%20Coverage/badge.svg)](https://github.com/zimuliu/WealthSimpleCSV2QIF/actions)
@@ -1115,16 +1115,32 @@ When reporting bugs, please include:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
-### MIT License Summary
+### GPL-3.0 License Summary
 
 - ✅ Commercial use
 - ✅ Modification
 - ✅ Distribution
 - ✅ Private use
+- ✅ Patent use
 - ❌ Liability
 - ❌ Warranty
+- ⚠️ **Copyleft**: Derivative works must also be licensed under GPL-3.0
+- ⚠️ **Source code**: Must provide source code when distributing
+- ⚠️ **License notice**: Must include license and copyright notice
+- ⚠️ **State changes**: Must document significant changes made to the code
+
+### Important GPL-3.0 Requirements
+
+If you distribute this software or create derivative works:
+
+1. **Include License**: You must include the GPL-3.0 license text
+2. **Provide Source**: You must make the source code available
+3. **Same License**: Derivative works must also be GPL-3.0 licensed
+4. **Document Changes**: You must clearly mark any modifications you make
+
+For more information about GPL-3.0, visit: https://www.gnu.org/licenses/gpl-3.0.html
 
 ---
 
