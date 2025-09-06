@@ -1,7 +1,7 @@
 import unittest
 
 from unittest.mock import patch, mock_open
-from app.main import read_csv_files, extract_account_name, read_config, extract_option_info, extract_unit, extract_symbol
+from app.main import read_csv_files, extract_account_name, read_config, extract_option_info, extract_unit, extract_symbol, generate_qif_entry
 
 class TestMain(unittest.TestCase):
     def test_extract_account_name_valid_format(self):
@@ -628,6 +628,429 @@ class TestMain(unittest.TestCase):
 
         result = extract_symbol("aapl - 10.0 shares", "CAD")
         self.assertEqual(result, "AAPL-QH")  # uppercase 'CAD' matches
+
+    # Tests for generate_qif_entry function
+    def test_generate_qif_entry_buy_transaction_usd(self):
+        """Test generate_qif_entry with BUY transaction in USD"""
+        row = {
+            'date': '2025-07-15',
+            'transaction': 'BUY',
+            'description': 'AAPL - 10.0 shares',
+            'amount': '-1500.00',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_buy_transaction_cad(self):
+        """Test generate_qif_entry with BUY transaction in CAD"""
+        row = {
+            'date': '2025-07-16',
+            'transaction': 'BUY',
+            'description': 'SHOP - 5.0 shares',
+            'amount': '-750.00',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        expected = 'D2025-07-16\nNBuy\nYSHOP-CT\nI150.0\nQ5.0\nT750.0\nO0.00\nCc\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_buy_cdr_symbol_cad(self):
+        """Test generate_qif_entry with BUY transaction for CDR symbol in CAD"""
+        row = {
+            'date': '2025-07-17',
+            'transaction': 'BUY',
+            'description': 'TSLA - 2.0 shares',
+            'amount': '-500.00',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        expected = 'D2025-07-17\nNBuy\nYTSLA-QH\nI250.0\nQ2.0\nT500.0\nO0.00\nCc\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_sell_transaction_usd(self):
+        """Test generate_qif_entry with SELL transaction in USD"""
+        row = {
+            'date': '2025-07-18',
+            'transaction': 'SELL',
+            'description': 'MSFT - 8.0 shares',
+            'amount': '2400.00',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-07-18\nNSell\nYMSFT-CT\nI300.0\nQ8.0\nT2400.0\nO0.00\nCc\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_sell_transaction_cad(self):
+        """Test generate_qif_entry with SELL transaction in CAD"""
+        row = {
+            'date': '2025-07-19',
+            'transaction': 'SELL',
+            'description': 'RY - 15.0 shares',
+            'amount': '1800.00',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        expected = 'D2025-07-19\nNSell\nYRY-CT\nI120.0\nQ15.0\nT1800.0\nO0.00\nCc\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_buytoopen_options_usd(self):
+        """Test generate_qif_entry with BUYTOOPEN options transaction in USD"""
+        row = {
+            'date': '2025-07-23',
+            'transaction': 'BUYTOOPEN',
+            'description': 'SPY 450.00 USD CALL 2025-07-25: Bought 2 contract (executed at 2025-07-23), Fee: $1.50',
+            'amount': '-320.50',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-07-23\nNBuy\nYSPY 450.00 USD CALL 2025-07-25\nI159.5\nQ2\nT320.5\nO1.5\nCc\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_selltoclose_options_usd(self):
+        """Test generate_qif_entry with SELLTOCLOSE options transaction in USD"""
+        row = {
+            'date': '2025-07-25',
+            'transaction': 'SELLTOCLOSE',
+            'description': 'AAPL 180.00 USD PUT 2025-07-30: Sold 1 contract (executed at 2025-07-25), Fee: $0.75',
+            'amount': '150.25',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-07-25\nNSell\nYAAPL 180.00 USD PUT 2025-07-30\nI151.0\nQ1\nT150.25\nO0.75\nCc\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_dividend_usd(self):
+        """Test generate_qif_entry with DIV transaction in USD"""
+        row = {
+            'date': '2025-07-20',
+            'transaction': 'DIV',
+            'description': 'AAPL - Dividend payment',
+            'amount': '25.50',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-07-20\nNDiv\nYAAPL-CT\nT25.5\nO0.00\nCc\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_dividend_cad(self):
+        """Test generate_qif_entry with DIV transaction in CAD"""
+        row = {
+            'date': '2025-07-21',
+            'transaction': 'DIV',
+            'description': 'TD - Dividend payment',
+            'amount': '15.75',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        expected = 'D2025-07-21\nNDiv\nYTD-CT\nT15.75\nO0.00\nCc\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_contribution_cad(self):
+        """Test generate_qif_entry with CONT transaction in CAD"""
+        row = {
+            'date': '2025-07-16',
+            'transaction': 'CONT',
+            'description': 'Contribution (executed at 2025-07-16)',
+            'amount': '1000.0',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        expected = 'D2025-07-16\nNXIn\nT1000.0\nO0.00\nCc\nPContribution\nMContribution (executed at 2025-07-16)\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_contribution_usd(self):
+        """Test generate_qif_entry with CONT transaction in USD"""
+        row = {
+            'date': '2025-07-22',
+            'transaction': 'CONT',
+            'description': 'Monthly contribution',
+            'amount': '500.0',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-07-22\nNXIn\nT500.0\nO0.00\nCc\nPContribution\nMMonthly contribution\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_fplint_usd(self):
+        """Test generate_qif_entry with FPLINT (stock lending interest) transaction in USD"""
+        row = {
+            'date': '2025-07-30',
+            'transaction': 'FPLINT',
+            'description': 'Stock lending interest payment',
+            'amount': '12.50',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-07-30\nNXIn\nT12.5\nO0.00\nCc\nPInterest\nMStock lending interest payment\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_nrt_usd(self):
+        """Test generate_qif_entry with NRT (Non-Resident Tax) transaction in USD"""
+        row = {
+            'date': '2025-07-31',
+            'transaction': 'NRT',
+            'description': 'US Non-Resident Tax Withholding',
+            'amount': '5.25',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-07-31\nNXOut\nT5.25\nO0.00\nCc\nPUS Non-Resident Tax Withholding\nMUS Non-Resident Tax Withholding\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_trfout_transactions(self):
+        """Test generate_qif_entry with various outgoing transfer transactions"""
+        # Test TRFOUT
+        row = {
+            'date': '2025-08-01',
+            'transaction': 'TRFOUT',
+            'description': 'Transfer to external account',
+            'amount': '200.00',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        expected = 'D2025-08-01\nT-200.0\nO0.00\nCc\nPTransfer to external account\n^'
+        self.assertEqual(result, expected)
+
+        # Test SPEND
+        row = {
+            'date': '2025-08-02',
+            'transaction': 'SPEND',
+            'description': 'Card purchase',
+            'amount': '50.00',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-08-02\nT-50.0\nO0.00\nCc\nPCard purchase\n^'
+        self.assertEqual(result, expected)
+
+        # Test E_TRFOUT
+        row = {
+            'date': '2025-08-03',
+            'transaction': 'E_TRFOUT',
+            'description': 'Electronic transfer out',
+            'amount': '100.00',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        expected = 'D2025-08-03\nT-100.0\nO0.00\nCc\nPElectronic transfer out\n^'
+        self.assertEqual(result, expected)
+
+        # Test EFTOUT
+        row = {
+            'date': '2025-08-04',
+            'transaction': 'EFTOUT',
+            'description': 'EFT withdrawal',
+            'amount': '75.00',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-08-04\nT-75.0\nO0.00\nCc\nPEFT withdrawal\n^'
+        self.assertEqual(result, expected)
+
+        # Test AFT_OUT
+        row = {
+            'date': '2025-08-05',
+            'transaction': 'AFT_OUT',
+            'description': 'Automated transfer out',
+            'amount': '125.00',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        expected = 'D2025-08-05\nT-125.0\nO0.00\nCc\nPAutomated transfer out\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_incoming_transactions(self):
+        """Test generate_qif_entry with various incoming transactions"""
+        # Test CASHBACK
+        row = {
+            'date': '2025-08-06',
+            'transaction': 'CASHBACK',
+            'description': 'Credit card cashback',
+            'amount': '15.00',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-08-06\nT15.0\nO0.00\nCc\nPCredit card cashback\n^'
+        self.assertEqual(result, expected)
+
+        # Test EFT
+        row = {
+            'date': '2025-08-07',
+            'transaction': 'EFT',
+            'description': 'Electronic funds transfer',
+            'amount': '300.00',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        expected = 'D2025-08-07\nT300.0\nO0.00\nCc\nPElectronic funds transfer\n^'
+        self.assertEqual(result, expected)
+
+        # Test INT
+        row = {
+            'date': '2025-08-08',
+            'transaction': 'INT',
+            'description': 'Interest payment',
+            'amount': '8.50',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-08-08\nT8.5\nO0.00\nCc\nPInterest payment\n^'
+        self.assertEqual(result, expected)
+
+        # Test TRFIN
+        row = {
+            'date': '2025-08-09',
+            'transaction': 'TRFIN',
+            'description': 'Transfer in from external',
+            'amount': '250.00',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        expected = 'D2025-08-09\nT250.0\nO0.00\nCc\nPTransfer in from external\n^'
+        self.assertEqual(result, expected)
+
+        # Test TRFINTF
+        row = {
+            'date': '2025-08-10',
+            'transaction': 'TRFINTF',
+            'description': 'Internal transfer fee',
+            'amount': '2.00',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-08-10\nT2.0\nO0.00\nCc\nPInternal transfer fee\n^'
+        self.assertEqual(result, expected)
+
+        # Test REFUND
+        row = {
+            'date': '2025-08-11',
+            'transaction': 'REFUND',
+            'description': 'Purchase refund',
+            'amount': '45.00',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        expected = 'D2025-08-11\nT45.0\nO0.00\nCc\nPPurchase refund\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_ignored_transactions(self):
+        """Test generate_qif_entry with ignored transaction types"""
+        ignored_types = ['RECALL', 'LOAN', 'STKDIS', 'STKREORG']
+
+        for transaction_type in ignored_types:
+            row = {
+                'date': '2025-08-12',
+                'transaction': transaction_type,
+                'description': f'{transaction_type} transaction',
+                'amount': '100.00',
+                'currency': 'USD'
+            }
+            result = generate_qif_entry(row, 'USD')
+            self.assertIsNone(result, f"Transaction type {transaction_type} should return None")
+
+    def test_generate_qif_entry_currency_filtering(self):
+        """Test generate_qif_entry currency filtering"""
+        # USD transaction with CAD target - should return None
+        row = {
+            'date': '2025-08-13',
+            'transaction': 'BUY',
+            'description': 'AAPL - 5.0 shares',
+            'amount': '-750.00',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'CAD')
+        self.assertIsNone(result)
+
+        # CAD transaction with USD target - should return None
+        row = {
+            'date': '2025-08-14',
+            'transaction': 'BUY',
+            'description': 'SHOP - 3.0 shares',
+            'amount': '-450.00',
+            'currency': 'CAD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        self.assertIsNone(result)
+
+        # Matching currencies should work
+        row = {
+            'date': '2025-08-15',
+            'transaction': 'BUY',
+            'description': 'MSFT - 2.0 shares',
+            'amount': '-600.00',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        self.assertIsNotNone(result)
+
+    def test_generate_qif_entry_invalid_transaction_type(self):
+        """Test generate_qif_entry with invalid transaction type"""
+        row = {
+            'date': '2025-08-16',
+            'transaction': 'INVALID_TYPE',
+            'description': 'Unknown transaction',
+            'amount': '100.00',
+            'currency': 'USD'
+        }
+
+        with self.assertRaises(ValueError) as context:
+            generate_qif_entry(row, 'USD')
+
+        self.assertIn('Invalid transaction type: INVALID_TYPE', str(context.exception))
+
+    def test_generate_qif_entry_fractional_shares_and_amounts(self):
+        """Test generate_qif_entry with fractional shares and amounts"""
+        # Test fractional shares
+        row = {
+            'date': '2025-08-17',
+            'transaction': 'BUY',
+            'description': 'GOOGL - 2.5 shares',
+            'amount': '-6250.75',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-08-17\nNBuy\nYGOOGL-CT\nI2500.3\nQ2.5\nT6250.75\nO0.00\nCc\n^'
+        self.assertEqual(result, expected)
+
+        # Test fractional options contracts and fees
+        row = {
+            'date': '2025-08-18',
+            'transaction': 'BUYTOOPEN',
+            'description': 'NVDA 800.00 USD CALL 2025-09-15: Bought 3 contract (executed at 2025-08-18), Fee: $2.25',
+            'amount': '-1502.25',
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-08-18\nNBuy\nYNVDA 800.00 USD CALL 2025-09-15\nI500.0\nQ3\nT1502.25\nO2.25\nCc\n^'
+        self.assertEqual(result, expected)
+
+    def test_generate_qif_entry_negative_amounts_handling(self):
+        """Test generate_qif_entry handles negative amounts correctly"""
+        # BUY transactions typically have negative amounts in CSV
+        row = {
+            'date': '2025-08-19',
+            'transaction': 'BUY',
+            'description': 'AMZN - 1.0 shares',
+            'amount': '-3500.00',  # Negative amount
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-08-19\nNBuy\nYAMZN-CT\nI3500.0\nQ1.0\nT3500.0\nO0.00\nCc\n^'
+        self.assertEqual(result, expected)
+
+        # SELL transactions typically have positive amounts in CSV
+        row = {
+            'date': '2025-08-20',
+            'transaction': 'SELL',
+            'description': 'AMZN - 1.0 shares',
+            'amount': '3600.00',  # Positive amount
+            'currency': 'USD'
+        }
+        result = generate_qif_entry(row, 'USD')
+        expected = 'D2025-08-20\nNSell\nYAMZN-CT\nI3600.0\nQ1.0\nT3600.0\nO0.00\nCc\n^'
+        self.assertEqual(result, expected)
 
 if __name__ == '__main__':
     unittest.main()
