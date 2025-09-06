@@ -31,6 +31,9 @@ def extract_account_name(filename):
     Returns:
         str: The extracted account name.
     """
+    if filename is None:
+        return None
+
     pattern = r'monthly-statement-transactions-(\w+)-\d{4}-\d{2}-\d{2}.csv'
     match = re.search(pattern, filename)
     if match:
