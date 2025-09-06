@@ -2,9 +2,10 @@ import unittest
 import tempfile
 import os
 import yaml
+import shutil
 
-from unittest.mock import patch, mock_open
-from app.main import read_csv_files, extract_account_name, read_config, extract_option_info, extract_unit, extract_symbol, generate_qif_entry
+from unittest.mock import patch, mock_open, MagicMock
+from app.main import read_csv_files, extract_account_name, read_config, extract_option_info, extract_unit, extract_symbol, generate_qif_entry, export_qif_files
 
 class TestMain(unittest.TestCase):
     def test_extract_account_name_valid_format(self):
@@ -1642,6 +1643,477 @@ WK23MTV36CAD-CAD
 
         # TSLA in USD should get -CT suffix (not CDR when in USD)
         self.assertIn('TSLA-CT', usd_transactions)
+
+    # Tests for export_qif_files function
+    def test_export_qif_files_investment_account_basic(self):
+        """Test export_qif_files with basic Investment account"""
+        # Create test data
+        account_data = {
+            'TEST123CAD-USD': [
+                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^',
+                'D2025-07-16\nNSell\nYMSFT-CT\nI300.0\nQ5.0\nT1500.0\nO0.00\nCc\n^'
+            ]
+        }
+
+        # Create config data
+        config_data = {
+            'TEST123CAD-USD': {
+                'nickname': 'My-Test-Investment',
+                'type': 'Investment'
+            }
+        }
+
+        # Mock read_config to return our test config data
+        with patch('app.main.read_config', return_value=config_data) as mock_read_config:
+            with patch('builtins.open', mock_open()) as mock_file:
+                export_qif_files(account_data, 'dummy_config.yml')
+
+                # Verify read_config was called
+                mock_read_config.assert_called_once_with('dummy_config.yml')
+
+                # Verify file was opened for writing
+                mock_file.assert_called_with('output/My-Test-Investment.qif', 'w')
+
+                # Verify content written to file
+                handle = mock_file.return_value
+                written_content = ''.join(call.args[0] for call in handle.write.call_args_list)
+
+                # Should start with Investment header
+                self.assertIn('!Type:Invst', written_content)
+                # Should contain the transactions
+                self.assertIn('AAPL-CT', written_content)
+                self.assertIn('MSFT-CT', written_content)
+
+    def test_export_qif_files_checking_account_basic(self):
+        """Test export_qif_files with basic Checking account"""
+        # Create test data
+        account_data = {
+            'WK23MTV36CAD-CAD': [
+                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^',
+                'D2025-07-16\nT-500.0\nO0.00\nCc\nPWithdrawal\n^'
+            ]
+        }
+
+        # Create config data
+        config_data = {
+            'WK23MTV36CAD-CAD': {
+                'nickname': 'My-Checking',
+                'type': 'Checking'
+            }
+        }
+
+        # Mock read_config to return our test config data
+        with patch('app.main.read_config', return_value=config_data):
+            with patch('builtins.open', mock_open()) as mock_file:
+                export_qif_files(account_data, 'dummy_config.yml')
+
+                # Verify file was opened for writing
+                mock_file.assert_called_with('output/My-Checking.qif', 'w')
+
+                # Verify content written to file
+                handle = mock_file.return_value
+                written_content = ''.join(call.args[0] for call in handle.write.call_args_list)
+
+                # Should start with Bank header
+                self.assertIn('!Type:Bank', written_content)
+                # Should contain the transactions
+                self.assertIn('T1000.0', written_content)
+                self.assertIn('T-500.0', written_content)
+
+    def test_export_qif_files_empty_transactions_skipped(self):
+        """Test export_qif_files skips accounts with empty transaction lists"""
+        # Create test data with empty transactions
+        account_data = {
+            'EMPTY123CAD-USD': [],
+            'NONEMPTY456CAD-USD': [
+                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            ]
+        }
+
+        # Create config data
+        config_data = {
+            'EMPTY123CAD-USD': {
+                'nickname': 'Empty-Account',
+                'type': 'Investment'
+            },
+            'NONEMPTY456CAD-USD': {
+                'nickname': 'Non-Empty-Account',
+                'type': 'Investment'
+            }
+        }
+
+        # Mock read_config to return our test config data
+        with patch('app.main.read_config', return_value=config_data):
+            with patch('builtins.open', mock_open()) as mock_file:
+                export_qif_files(account_data, 'dummy_config.yml')
+
+                # Should only be called once (for non-empty account)
+                self.assertEqual(mock_file.call_count, 1)
+                mock_file.assert_called_with('output/Non-Empty-Account.qif', 'w')
+
+    def test_export_qif_files_unknown_account_error(self):
+        """Test export_qif_files raises ValueError for unknown account"""
+        # Create test data with account not in config
+        account_data = {
+            'UNKNOWN123CAD-USD': [
+                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            ]
+        }
+
+        # Create temporary config file without the account
+        config_data = {
+            'DIFFERENT456CAD-USD': {
+                'nickname': 'Different-Account',
+                'type': 'Investment'
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as config_file:
+            yaml.dump(config_data, config_file)
+            config_file_path = config_file.name
+
+        with self.assertRaises(ValueError) as context:
+            export_qif_files(account_data, config_file_path)
+
+        self.assertIn('Unknown account', str(context.exception))
+
+        # Clean up
+        os.unlink(config_file_path)
+
+    def test_export_qif_files_currency_mismatch_checking_cad(self):
+        """Test export_qif_files detects currency mismatch for CAD checking account"""
+        # Create test data - CAD base account with USD suffix (mismatch)
+        account_data = {
+            'WK23MTV36CAD-USD': [  # CAD base account but USD suffix
+                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^'
+            ]
+        }
+
+        # Create temporary config file
+        config_data = {
+            'WK23MTV36CAD-USD': {
+                'nickname': 'Mismatched-Checking',
+                'type': 'Checking'
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as config_file:
+            yaml.dump(config_data, config_file)
+            config_file_path = config_file.name
+
+        with self.assertRaises(ValueError) as context:
+            export_qif_files(account_data, config_file_path)
+
+        error_message = str(context.exception)
+        self.assertIn('Currency mismatch', error_message)
+        self.assertIn('WK23MTV36CAD-USD', error_message)
+        self.assertIn('USD', error_message)
+        self.assertIn('CAD', error_message)
+
+        # Clean up
+        os.unlink(config_file_path)
+
+    def test_export_qif_files_currency_mismatch_checking_usd(self):
+        """Test export_qif_files detects currency mismatch for USD checking account"""
+        # Create test data - USD base account with CAD suffix (mismatch)
+        account_data = {
+            'WK5DRT238USD-CAD': [  # USD base account but CAD suffix
+                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^'
+            ]
+        }
+
+        # Create temporary config file
+        config_data = {
+            'WK5DRT238USD-CAD': {
+                'nickname': 'Mismatched-USD-Checking',
+                'type': 'Checking'
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as config_file:
+            yaml.dump(config_data, config_file)
+            config_file_path = config_file.name
+
+        with self.assertRaises(ValueError) as context:
+            export_qif_files(account_data, config_file_path)
+
+        error_message = str(context.exception)
+        self.assertIn('Currency mismatch', error_message)
+        self.assertIn('WK5DRT238USD-CAD', error_message)
+        self.assertIn('CAD', error_message)
+        self.assertIn('USD', error_message)
+
+        # Clean up
+        os.unlink(config_file_path)
+
+    def test_export_qif_files_currency_match_checking_accounts(self):
+        """Test export_qif_files allows matching currencies for checking accounts"""
+        # Create test data with matching currencies
+        account_data = {
+            'WK23MTV36CAD-CAD': [  # CAD base account with CAD suffix (match)
+                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^'
+            ],
+            'WK5DRT238USD-USD': [  # USD base account with USD suffix (match)
+                'D2025-07-16\nT500.0\nO0.00\nCc\nPDeposit\n^'
+            ]
+        }
+
+        # Create config data
+        config_data = {
+            'WK23MTV36CAD-CAD': {
+                'nickname': 'CAD-Checking',
+                'type': 'Checking'
+            },
+            'WK5DRT238USD-USD': {
+                'nickname': 'USD-Checking',
+                'type': 'Checking'
+            }
+        }
+
+        # Mock read_config to return our test config data
+        with patch('app.main.read_config', return_value=config_data):
+            with patch('builtins.open', mock_open()) as mock_file:
+                # Should not raise any exceptions
+                export_qif_files(account_data, 'dummy_config.yml')
+
+                # Should be called twice (once for each account)
+                self.assertEqual(mock_file.call_count, 2)
+
+    def test_export_qif_files_investment_accounts_no_currency_validation(self):
+        """Test export_qif_files does not validate currency for Investment accounts"""
+        # Create test data - Investment accounts should not have currency validation
+        account_data = {
+            'H16530307CAD-USD': [  # CAD base account with USD suffix (should be OK for Investment)
+                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            ],
+            'H16530307CAD-CAD': [  # CAD base account with CAD suffix
+                'D2025-07-16\nNBuy\nYSHOP-CT\nI100.0\nQ5.0\nT500.0\nO0.00\nCc\n^'
+            ]
+        }
+
+        # Create config data
+        config_data = {
+            'H16530307CAD-USD': {
+                'nickname': 'Investment-USD',
+                'type': 'Investment'
+            },
+            'H16530307CAD-CAD': {
+                'nickname': 'Investment-CAD',
+                'type': 'Investment'
+            }
+        }
+
+        # Mock read_config to return our test config data
+        with patch('app.main.read_config', return_value=config_data):
+            with patch('builtins.open', mock_open()) as mock_file:
+                # Should not raise any exceptions for Investment accounts
+                export_qif_files(account_data, 'dummy_config.yml')
+
+                # Should be called twice (once for each account)
+                self.assertEqual(mock_file.call_count, 2)
+
+    def test_export_qif_files_multiple_mixed_accounts(self):
+        """Test export_qif_files with multiple Investment and Checking accounts"""
+        # Create test data with mixed account types
+        account_data = {
+            'H16530307CAD-USD': [
+                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            ],
+            'H16530307CAD-CAD': [
+                'D2025-07-16\nNBuy\nYTSLA-QH\nI250.0\nQ2.0\nT500.0\nO0.00\nCc\n^'
+            ],
+            'WK23MTV36CAD-CAD': [
+                'D2025-07-17\nT1000.0\nO0.00\nCc\nPDeposit\n^'
+            ]
+        }
+
+        # Create config data
+        config_data = {
+            'H16530307CAD-USD': {
+                'nickname': 'Investment-USD',
+                'type': 'Investment'
+            },
+            'H16530307CAD-CAD': {
+                'nickname': 'Investment-CAD',
+                'type': 'Investment'
+            },
+            'WK23MTV36CAD-CAD': {
+                'nickname': 'Checking-CAD',
+                'type': 'Checking'
+            }
+        }
+
+        # Mock read_config to return our test config data
+        with patch('app.main.read_config', return_value=config_data):
+            with patch('builtins.open', mock_open()) as mock_file:
+                export_qif_files(account_data, 'dummy_config.yml')
+
+                # Should be called three times (once for each account)
+                self.assertEqual(mock_file.call_count, 3)
+
+                # Verify correct filenames were used
+                expected_calls = [
+                    ('output/Investment-USD.qif', 'w'),
+                    ('output/Investment-CAD.qif', 'w'),
+                    ('output/Checking-CAD.qif', 'w')
+                ]
+                actual_calls = [call.args for call in mock_file.call_args_list]
+                self.assertEqual(set(actual_calls), set(expected_calls))
+
+    def test_export_qif_files_special_characters_in_nicknames(self):
+        """Test export_qif_files with special characters in account nicknames"""
+        # Create test data
+        account_data = {
+            'SPECIAL123CAD-USD': [
+                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            ]
+        }
+
+        # Create config data with special characters in nickname
+        config_data = {
+            'SPECIAL123CAD-USD': {
+                'nickname': 'My-Special_Account.Test',
+                'type': 'Investment'
+            }
+        }
+
+        # Mock read_config to return our test config data
+        with patch('app.main.read_config', return_value=config_data):
+            with patch('builtins.open', mock_open()) as mock_file:
+                export_qif_files(account_data, 'dummy_config.yml')
+
+                # Verify filename includes special characters
+                mock_file.assert_called_with('output/My-Special_Account.Test.qif', 'w')
+
+    def test_export_qif_files_config_file_not_found(self):
+        """Test export_qif_files with non-existent config file"""
+        account_data = {
+            'TEST123CAD-USD': [
+                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            ]
+        }
+
+        non_existent_config = '/path/that/does/not/exist/config.yml'
+
+        with self.assertRaises(FileNotFoundError):
+            export_qif_files(account_data, non_existent_config)
+
+    def test_export_qif_files_invalid_config_file(self):
+        """Test export_qif_files with invalid YAML config file"""
+        account_data = {
+            'TEST123CAD-USD': [
+                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            ]
+        }
+
+        # Create invalid YAML file
+        invalid_yaml_content = """
+TEST123CAD-USD:
+  nickname: Test-Account
+  type: Investment
+    invalid_indentation: true
+"""
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as config_file:
+            config_file.write(invalid_yaml_content)
+            config_file_path = config_file.name
+
+        with self.assertRaises(yaml.YAMLError):
+            export_qif_files(account_data, config_file_path)
+
+        # Clean up
+        os.unlink(config_file_path)
+
+    def test_export_qif_files_account_without_hyphen(self):
+        """Test export_qif_files with account name without hyphen (edge case)"""
+        # Create test data with account name without hyphen
+        account_data = {
+            'NOHYPHEN': [
+                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^'
+            ]
+        }
+
+        # Create config data
+        config_data = {
+            'NOHYPHEN': {
+                'nickname': 'No-Hyphen-Account',
+                'type': 'Checking'
+            }
+        }
+
+        # Mock read_config to return our test config data
+        with patch('app.main.read_config', return_value=config_data):
+            with patch('builtins.open', mock_open()) as mock_file:
+                # Should not raise exceptions for accounts without hyphens
+                export_qif_files(account_data, 'dummy_config.yml')
+
+                # Should successfully create the file
+                mock_file.assert_called_with('output/No-Hyphen-Account.qif', 'w')
+
+    def test_export_qif_files_checking_account_default_currency_cad(self):
+        """Test export_qif_files defaults to CAD for unclear checking account base names"""
+        # Create test data with unclear base account name
+        account_data = {
+            'UNCLEAR123-USD': [  # Unclear base name, should default to CAD expectation
+                'D2025-07-15\nT1000.0\nO0.00\nCc\nPDeposit\n^'
+            ]
+        }
+
+        # Create temporary config file
+        config_data = {
+            'UNCLEAR123-USD': {
+                'nickname': 'Unclear-Checking',
+                'type': 'Checking'
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as config_file:
+            yaml.dump(config_data, config_file)
+            config_file_path = config_file.name
+
+        # Should raise currency mismatch error (defaults to expecting CAD but got USD)
+        with self.assertRaises(ValueError) as context:
+            export_qif_files(account_data, config_file_path)
+
+        error_message = str(context.exception)
+        self.assertIn('Currency mismatch', error_message)
+
+        # Clean up
+        os.unlink(config_file_path)
+
+    @patch('builtins.print')  # Mock print to avoid output during tests
+    def test_export_qif_files_prints_config_and_account_names(self, mock_print):
+        """Test export_qif_files prints config and processes account names"""
+        # Create test data
+        account_data = {
+            'TEST123CAD-USD': [
+                'D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^'
+            ]
+        }
+
+        # Create config data
+        config_data = {
+            'TEST123CAD-USD': {
+                'nickname': 'Test-Investment',
+                'type': 'Investment'
+            }
+        }
+
+        # Mock read_config to return our test config data
+        with patch('app.main.read_config', return_value=config_data):
+            with patch('builtins.open', mock_open()) as mock_file:
+                export_qif_files(account_data, 'dummy_config.yml')
+
+                # Verify print statements were called
+                self.assertTrue(mock_print.called)
+
+                # Check that config was printed (first call)
+                first_call_args = mock_print.call_args_list[0][0]
+                self.assertEqual(first_call_args[0], config_data)
+
+                # Check that account name was printed (second call)
+                second_call_args = mock_print.call_args_list[1][0]
+                self.assertEqual(second_call_args[0], 'TEST123CAD-USD')
 
 if __name__ == '__main__':
     unittest.main()
