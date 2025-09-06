@@ -128,18 +128,25 @@ cp accounts-sample.yml accounts.yml
 ### Configuration Format
 
 ```yaml
-# WealthSimple Account ID (from CSV filename)
-H12345678CAD:
-  nickname: My-TFSA           # Output filename will be "My-TFSA.qif"
-  type: Investment            # QIF account type: Investment or Checking
+# Multi-currency account example (most common scenario)
+# Single WealthSimple account with both USD and CAD transactions
+AB1234567CAD:
+  nickname: My-TFSA               # Output filenames will be "My-TFSA-USD.qif" and "My-TFSA-CAD.qif"
+  type: Investment                # QIF account type: Investment or Checking
 
-WK1234567CAD:
-  nickname: My-Cash-Account
+# Cash account example (USD only - matches account currency)
+CD9876543USD:
+  nickname: My-US-Saving       # Output filename will be "My-US-Saving-USD.qif" only
   type: Checking
 
-# USD account example
-H12345678USD:
-  nickname: My-USD-Trading
+# CAD cash account example
+EF5555555CAD:
+  nickname: My-Chequeing           # Output filename will be "My-Chequeing-CAD.qif" only
+  type: Checking
+
+# Investment account example (processes both currencies)
+GH7777777CAD:
+  nickname: My-Trading            # Output filenames will be "My-Trading-USD.qif" and "My-Trading-CAD.qif"
   type: Investment
 ```
 
@@ -157,7 +164,24 @@ Account IDs are found in your WealthSimple CSV filenames:
 monthly-statement-transactions-[ACCOUNT_ID]-[DATE].csv
                                ^^^^^^^^^^^^
                                This is your Account ID
+
+Examples:
+monthly-statement-transactions-AB1234567CAD-2025-07-01.csv → Account ID: AB1234567CAD
+monthly-statement-transactions-CD9876543USD-2025-06-30.csv → Account ID: CD9876543USD
 ```
+
+**Important Multi-Currency Note**: The tool automatically processes both USD and CAD transactions from each account. You only need to configure the base account name in your `accounts.yml`:
+
+- Configure: `AB1234567CAD` (base account name from CSV filename)
+- Tool automatically creates: `AB1234567CAD-USD` and `AB1234567CAD-CAD` internally for processing
+- Output files: `My-TFSA-USD.qif` and `My-TFSA-CAD.qif` (nickname + currency suffix)
+
+**Important for Checking Accounts:** Checking (cash) accounts only process transactions matching the account's currency suffix. For example:
+- `CD9876543USD` (Checking) → Only processes USD transactions → `My-US-Saving-USD.qif`
+- `EF5555555CAD` (Checking) → Only processes CAD transactions → `My-Chequeing-CAD.qif`
+- Investment accounts process both currencies regardless of account suffix
+
+This allows proper separation of currencies into different QIF files for accurate accounting.
 
 ## Usage
 
@@ -200,8 +224,10 @@ monthly-statement-transactions-{ACCOUNT_ID}-{YYYY-MM-DD}.csv
 ```
 
 **Examples:**
-- `monthly-statement-transactions-HQ8ABC123CAD-2025-07-01.csv`
-- `monthly-statement-transactions-WK9876543USD-2025-06-30.csv`
+- `monthly-statement-transactions-AB1234567CAD-2025-07-01.csv`
+- `monthly-statement-transactions-CD9876543USD-2025-06-30.csv`
+- `monthly-statement-transactions-EF5555555CAD-2025-08-15.csv`
+- `monthly-statement-transactions-GH7777777CAD-2025-09-01.csv`
 
 ### Required CSV Columns
 
@@ -220,6 +246,11 @@ date,transaction,description,amount,balance,currency
 2025-07-15,BUY,AAPL - 10.0 shares,-1500.00,23500.00,USD
 2025-07-16,DIV,AAPL - Dividend,25.50,23525.50,USD
 2025-07-17,SELL,AAPL - 5.0 shares,750.00,24275.50,USD
+2025-07-18,CONT,"Contribution (executed at 2025-07-18)",1000.0,24775.50,USD
+2025-07-19,BUYTOOPEN,"SPY 450.00 USD CALL 2025-07-25: Bought 2 contract (executed at 2025-07-19), Fee: $1.50",-320.50,24455.00,USD
+2025-07-20,SELLTOCLOSE,"SPY 450.00 USD CALL 2025-07-25: Sold 2 contract (executed at 2025-07-20), Fee: $1.50",385.50,24840.50,USD
+2025-07-21,BUY,SHOP - 15.0 shares,-825.00,24015.50,CAD
+2025-07-22,EFT,"Electronic Transfer In",500.0,24515.50,CAD
 ```
 
 ## Output Format
@@ -231,7 +262,7 @@ The tool generates QIF files in the `output/` directory with names based on your
 ```
 output/
 ├── My-TFSA.qif
-├── My-Cash-Account.qif
+├── My-US-Saving.qif
 └── My-USD-Trading.qif
 ```
 
@@ -335,28 +366,174 @@ Cc
 **Input CSV:**
 ```csv
 date,transaction,description,amount,balance,currency
-2025-07-15,BUYTOOPEN,"SPY 631.00 USD PUT 2025-07-23: Bought 3 contract (executed at 2025-07-23), Fee: $2.25",-945.75,8204.25,USD
+2025-07-23,BUYTOOPEN,"SPY 450.00 USD CALL 2025-07-25: Bought 2 contract (executed at 2025-07-23), Fee: $1.50",-320.50,8204.25,USD
+2025-07-24,SELLTOCLOSE,"SPY 450.00 USD CALL 2025-07-25: Sold 2 contract (executed at 2025-07-24), Fee: $1.50",385.50,8589.75,USD
+2025-07-25,BUYTOOPEN,"AAPL 180.00 USD PUT 2025-07-30: Bought 1 contract (executed at 2025-07-25), Fee: $0.75",-245.75,8344.00,USD
 ```
 
 **Output QIF:**
 ```
 !Type:Invst
-D07/15/2025
+D07/23/2025
 NBuy
-YSPY 631.00 USD PUT 2025-07-23
-I314.50
-Q3
-T945.75
-O2.25
+YSPY 450.00 USD CALL 2025-07-25
+I159.50
+Q2
+T320.50
+O1.50
+Cc
+^
+D07/24/2025
+NSell
+YSPY 450.00 USD CALL 2025-07-25
+I192.00
+Q2
+T385.50
+O1.50
+Cc
+^
+D07/25/2025
+NBuy
+YAAPL 180.00 USD PUT 2025-07-30
+I245.00
+Q1
+T245.75
+O0.75
 Cc
 ^
 ```
 
-### Example 3: Multi-Currency Account
+### Example 3: Cash Account Transactions
 
-For account `HQ8KJW805CAD` with both USD and CAD transactions, the tool creates separate entries:
-- `HQ8KJW805CAD-USD` for USD transactions
-- `HQ8KJW805CAD-CAD` for CAD transactions
+**Input CSV:**
+```csv
+date,transaction,description,amount,balance,currency
+2025-07-15,CONT,"Contribution (executed at 2025-07-15)",1000.0,15000.0,CAD
+2025-07-16,EFT,"Electronic Transfer In",500.0,15500.0,CAD
+2025-07-17,SPEND,"Coffee Shop Purchase",-4.50,15495.50,CAD
+2025-07-18,INT,"Interest Payment",2.25,15497.75,CAD
+2025-07-19,NRT,"US Non-Resident Tax Withholding",-15.00,15482.75,USD
+```
+
+**Output QIF (Checking Account):**
+```
+!Type:Bank
+D07/15/2025
+NXIn
+T1000.0
+O0.00
+Cc
+PContribution
+MContribution (executed at 2025-07-15)
+^
+D07/16/2025
+T500.0
+O0.00
+Cc
+PElectronic Transfer In
+^
+D07/17/2025
+T-4.50
+O0.00
+Cc
+PCoffee Shop Purchase
+^
+D07/18/2025
+T2.25
+O0.00
+Cc
+PInterest Payment
+^
+D07/19/2025
+NXOut
+T15.00
+O0.00
+Cc
+PUS Non-Resident Tax Withholding
+MUS Non-Resident Tax Withholding
+^
+```
+
+### Example 4: Multi-Currency Account (Complete Workflow)
+
+This is the most common scenario: a single WealthSimple account containing both USD and CAD transactions.
+
+**Input CSV (monthly-statement-transactions-AB1234567CAD-2025-07-01.csv):**
+```csv
+date,transaction,description,amount,balance,currency
+2025-07-15,BUY,AAPL - 10.0 shares,-1500.00,23500.00,USD
+2025-07-16,CONT,"Contribution (executed at 2025-07-16)",2000.0,25500.00,CAD
+2025-07-17,BUY,SHOP - 15.0 shares,-825.00,24675.00,CAD
+2025-07-18,DIV,AAPL - Dividend,25.50,23525.50,USD
+2025-07-19,BUYTOOPEN,"SPY 450.00 USD CALL 2025-07-25: Bought 1 contract (executed at 2025-07-19), Fee: $0.75",-160.75,23364.75,USD
+```
+
+**accounts.yml Configuration:**
+```yaml
+AB1234567CAD:
+  nickname: My-Investment
+  type: Investment
+```
+
+**Generated Output Files:**
+
+**My-Investment-USD.qif (USD transactions only):**
+```
+!Type:Invst
+D07/15/2025
+NBuy
+YAAPL-CT
+I150.00
+Q10
+T1500.00
+O0.00
+Cc
+^
+D07/18/2025
+NDiv
+YAAPL-CT
+T25.50
+O0.00
+Cc
+^
+D07/19/2025
+NBuy
+YSPY 450.00 USD CALL 2025-07-25
+I160.00
+Q1
+T160.75
+O0.75
+Cc
+^
+```
+
+**My-Investment-CAD.qif (CAD transactions only):**
+```
+!Type:Invst
+D07/16/2025
+NXIn
+T2000.0
+O0.00
+Cc
+PContribution
+MContribution (executed at 2025-07-16)
+^
+D07/17/2025
+NBuy
+YSHOP-CT
+I55.00
+Q15
+T825.00
+O0.00
+Cc
+^
+```
+
+**Key Multi-Currency Features:**
+- **Automatic Separation**: One CSV file becomes two QIF files based on currency
+- **Currency Suffix**: Tool adds `-USD` and `-CAD` to account IDs automatically
+- **Independent Processing**: Each currency is processed separately for accurate accounting
+- **Symbol Mapping**: CDR symbols get `-QH` suffix for CAD accounts, others get `-CT`
 
 ## Technical Details
 

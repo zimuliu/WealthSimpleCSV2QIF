@@ -42,12 +42,23 @@ def extract_option_info(description):
     """
     Extract the option name, number of contracts, and fees from the given description.
 
+    Parses WealthSimple options trading descriptions to extract key information needed
+    for QIF conversion. Handles both BUYTOOPEN and SELLTOCLOSE transactions.
+
     Args:
         description (str): The description string containing option details.
-        Example: "SPY 631.00 USD PUT 2025-07-23: Bought 3 contract (executed at 2025-07-23), Fee: $2.2500"
+
+    Examples:
+        "SPY 450.00 USD CALL 2025-07-25: Bought 2 contract (executed at 2025-07-23), Fee: $1.50"
+        "AAPL 180.00 USD PUT 2025-07-30: Sold 1 contract (executed at 2025-07-25), Fee: $0.75"
+        "TSLA 250.00 USD CALL 2025-08-15: Bought 5 contract (executed at 2025-08-10), Fee: $3.75"
 
     Returns:
-        tuple: (option_name, contracts, fee) or (None, None, None) if no match found.
+        tuple: (option_name, contracts, fee) where:
+            - option_name (str): Full option symbol (e.g., "SPY 450.00 USD CALL 2025-07-25")
+            - contracts (int): Number of contracts traded (e.g., 2)
+            - fee (float): Trading fee in dollars (e.g., 1.50)
+            Returns (None, None, None) if parsing fails.
     """
     if not description or not isinstance(description, str):
         return None, None, None
@@ -68,15 +79,28 @@ def extract_option_info(description):
     return option_name, contracts, fee
 
 
-def extract_symbol(description):
+def extract_symbol(description, currency):
     """
-    Extract the symbol from the given description.
+    Extract the stock symbol from the given description and apply appropriate suffix.
+
+    Handles both regular stocks and Canadian Depositary Receipts (CDRs) with proper
+    symbol mapping for QIF compatibility.
 
     Args:
-        description (str): The description.
+        description (str): The transaction description containing the symbol.
+        currency (str): The transaction currency ("USD" or "CAD").
+
+    Examples:
+        Input: "AAPL - 10.0 shares", currency="USD" → Output: "AAPL-CT"
+        Input: "TSLA - 5.0 shares", currency="CAD" → Output: "TSLA-QH" (CDR mapping)
+        Input: "SHOP - 15.0 shares", currency="CAD" → Output: "SHOP-CT"
+        Input: "NVDA - 8.0 shares", currency="CAD" → Output: "NVDA-QH" (CDR mapping)
 
     Returns:
-        str: The extracted symbol.
+        str: The extracted symbol with appropriate suffix:
+            - CDR symbols (TSLA, DIS, NVDA, AAPL) in CAD get "-QH" suffix
+            - All other symbols get "-CT" suffix
+            - Returns None if symbol extraction fails
     """
     dash_index = description.find('-')
     if dash_index == -1:
@@ -84,23 +108,32 @@ def extract_symbol(description):
     else:
         symbol = description[:dash_index].strip()
         CDR_SYMBOLS = ["TSLA", "DIS", "NVDA", "AAPL"]
-        if symbol in CDR_SYMBOLS:
+        if symbol in CDR_SYMBOLS and currency == "CAD":
             return f'{symbol}-QH'
         else:
             return f'{symbol}-CT'
 
 def extract_unit(input_string):
     """
-    Extract the unit from the given input string.
+    Extract the number of shares from the given input string.
 
-    The expected format of the input string is:
-    '{NUMBER} shares'
+    Parses WealthSimple stock transaction descriptions to extract share quantities
+    for QIF conversion.
 
     Args:
-        input_string (str): The input string.
+        input_string (str): The transaction description containing share information.
+
+    Examples:
+        "AAPL - 10.0 shares" → Returns: 10.0
+        "TSLA - 5.0 shares" → Returns: 5.0
+        "SHOP - 15.0 shares" → Returns: 15.0
+        "NVDA - 2.5 shares" → Returns: 2.5
 
     Returns:
-        float: The extracted number.
+        float: The extracted number of shares, or None if parsing fails.
+
+    Note:
+        Expected format is '{SYMBOL} - {NUMBER} shares'
     """
     pattern = r'(\d+\.\d+) shares'
     match = re.search(pattern, input_string)
@@ -110,6 +143,47 @@ def extract_unit(input_string):
         return None
 
 def generate_qif_entry(row, target_currency):
+    """
+    Generate a QIF entry from a CSV transaction row for the specified currency.
+
+    Converts WealthSimple CSV transaction data into QIF format entries. Handles
+    multiple transaction types including stocks, options, dividends, contributions,
+    and various cash transactions. Only processes transactions matching the target currency.
+
+    Args:
+        row (dict): CSV row containing transaction data with keys:
+            - 'date': Transaction date (YYYY-MM-DD format)
+            - 'transaction': Transaction type (BUY, SELL, BUYTOOPEN, etc.)
+            - 'description': Transaction description
+            - 'amount': Transaction amount (string, can be negative)
+            - 'currency': Transaction currency (USD or CAD)
+        target_currency (str): Currency to filter for ("USD" or "CAD")
+
+    Examples:
+        Stock Purchase:
+        Input: {'date': '2025-07-15', 'transaction': 'BUY', 'description': 'AAPL - 10.0 shares',
+                'amount': '-1500.00', 'currency': 'USD'}
+        Output: 'D07/15/2025\nNBuy\nYAAPL-CT\nI150.00\nQ10\nT1500.00\nO0.00\nCc\n^'
+
+        Options Trading:
+        Input: {'date': '2025-07-23', 'transaction': 'BUYTOOPEN',
+                'description': 'SPY 450.00 USD CALL 2025-07-25: Bought 2 contract (executed at 2025-07-23), Fee: $1.50',
+                'amount': '-320.50', 'currency': 'USD'}
+        Output: 'D07/23/2025\nNBuy\nYSPY 450.00 USD CALL 2025-07-25\nI159.50\nQ2\nT320.50\nO1.50\nCc\n^'
+
+        Contribution:
+        Input: {'date': '2025-07-16', 'transaction': 'CONT',
+                'description': 'Contribution (executed at 2025-07-16)', 'amount': '1000.0', 'currency': 'CAD'}
+        Output: 'D07/16/2025\nNXIn\nT1000.0\nO0.00\nCc\nPContribution\nMContribution (executed at 2025-07-16)\n^'
+
+    Returns:
+        str: Formatted QIF entry string, or None if:
+            - Currency doesn't match target_currency
+            - Transaction type is in the ignored list (RECALL, LOAN, STKDIS, STKREORG)
+
+    Raises:
+        ValueError: If transaction type is not recognized
+    """
     transaction_type = row['transaction']
     total = abs(float(row['amount']))
     currency = row['currency']
@@ -118,12 +192,12 @@ def generate_qif_entry(row, target_currency):
         return None
 
     if transaction_type == 'BUY':
-        symbol = extract_symbol(row['description'])
+        symbol = extract_symbol(row['description'], currency)
         unit = extract_unit(row['description'])
         price = total / unit
         return f'D{row["date"]}\nNBuy\nY{symbol}\nI{price}\nQ{unit}\nT{total}\nO0.00\nCc\n^'
     elif transaction_type == 'SELL':
-        symbol = extract_symbol(row['description'])
+        symbol = extract_symbol(row['description'], currency)
         unit = extract_unit(row['description'])
         price = total / unit
         return f'D{row["date"]}\nNSell\nY{symbol}\nI{price}\nQ{unit}\nT{total}\nO0.00\nCc\n^'
@@ -138,7 +212,7 @@ def generate_qif_entry(row, target_currency):
         price = option_total / unit
         return f'D{row["date"]}\nNSell\nY{option_name}\nI{price}\nQ{unit}\nT{total}\nO{fee}\nCc\n^'
     elif transaction_type == 'DIV':
-        symbol = extract_symbol(row['description'])
+        symbol = extract_symbol(row['description'], currency)
         return f'D{row["date"]}\nNDiv\nY{symbol}\nT{total}\nO0.00\nCc\n^'
     elif transaction_type == 'CONT':
         return f'D{row["date"]}\nNXIn\nT{total}\nO0.00\nCc\nPContribution\nM{row["description"]}\n^'
@@ -156,6 +230,39 @@ def generate_qif_entry(row, target_currency):
         raise ValueError(f'Invalid transaction type: {transaction_type}')
 
 def read_csv_files(input_folder):
+    """
+    Read all CSV files from the input folder and organize transactions by account and currency.
+
+    Processes WealthSimple CSV exports and separates transactions by currency for each account.
+    Creates separate account entries for USD and CAD transactions to enable proper multi-currency
+    accounting in QIF format.
+
+    Args:
+        input_folder (str): Path to folder containing WealthSimple CSV files.
+                           Expected filename format: 'monthly-statement-transactions-{ACCOUNT_ID}-{DATE}.csv'
+
+    Examples:
+        Input files:
+        - monthly-statement-transactions-AB1234567CAD-2025-07-01.csv
+        - monthly-statement-transactions-CD9876543USD-2025-06-30.csv
+
+        Output structure:
+        {
+            'AB1234567CAD-USD': [list of USD QIF entries],
+            'AB1234567CAD-CAD': [list of CAD QIF entries],
+            'CD9876543USD-USD': [list of USD QIF entries],
+            'CD9876543USD-CAD': [list of CAD QIF entries]  # May be empty
+        }
+
+    Returns:
+        dict: Dictionary where keys are account names with currency suffixes (e.g., 'AB1234567CAD-USD')
+              and values are lists of QIF entry strings for that account/currency combination.
+
+    Note:
+        - Automatically creates both USD and CAD variants for each account
+        - Empty lists are created even if no transactions exist for a currency
+        - Account ID is extracted from filename using regex pattern
+    """
     transactions_by_account = {}
 
     for filename in os.listdir(input_folder):
@@ -178,8 +285,58 @@ def export_qif_files(account_data, config_filename):
     """
     Export individual QIF files for each account in the account data dictionary.
 
+    Creates separate QIF files for each configured account, applying the appropriate
+    QIF format header based on account type (Investment vs Checking).
+
     Args:
-        account_data (dict): A dictionary where the keys are account names and the values are lists of strings.
+        account_data (dict): Dictionary where keys are account names with currency suffixes
+                           (e.g., 'AB1234567CAD-USD') and values are lists of QIF entry strings.
+        config_filename (str): Path to YAML configuration file containing base account mappings.
+
+    Configuration Example:
+        accounts.yml:
+        ```yaml
+        AB1234567CAD:
+          nickname: My-Investment
+          type: Investment
+        CD9876543USD:
+          nickname: My-US-Saving
+          type: Checking
+        EF5555555CAD:
+          nickname: My-Chequeing
+          type: Checking
+        ```
+
+    Output Files:
+        - output/My-Investment-USD.qif (Investment account format - both currencies)
+        - output/My-Investment-CAD.qif (Investment account format - both currencies)
+        - output/My-US-Saving-USD.qif (Bank account format - USD only, matches account suffix)
+        - output/My-Chequeing-CAD.qif (Bank account format - CAD only, matches account suffix)
+
+    Processing Flow:
+        1. Tool reads base account names from accounts.yml (e.g., 'AB1234567CAD')
+        2. Internally processes currency-suffixed accounts (e.g., 'AB1234567CAD-USD')
+        3. For Investment accounts: Generates output files for both currencies
+        4. For Checking accounts: Only generates output for currency matching account suffix
+        5. Output files use nickname + currency suffix format
+
+    Currency Matching Rules:
+        - Investment accounts: Process both USD and CAD transactions regardless of account suffix
+        - Checking accounts: Only process transactions matching the account's currency suffix
+          * CD9876543USD (Checking) → Only USD transactions
+          * EF5555555CAD (Checking) → Only CAD transactions
+
+    QIF Headers:
+        - Investment accounts: '!Type:Invst'
+        - Checking accounts: '!Type:Bank'
+
+    Raises:
+        ValueError: If account name from CSV is not found in configuration file.
+
+    Note:
+        - Skips accounts with no transactions (empty lists)
+        - Creates output directory if it doesn't exist
+        - Overwrites existing QIF files with same names
     """
 
     config = read_config(config_filename)
