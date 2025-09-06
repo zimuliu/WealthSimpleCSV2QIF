@@ -84,7 +84,8 @@ def extract_symbol(description, currency):
     Extract the stock symbol from the given description and apply appropriate suffix.
 
     Handles both regular stocks and Canadian Depositary Receipts (CDRs) with proper
-    symbol mapping for QIF compatibility.
+    symbol mapping for QIF compatibility. Symbol extraction is case-insensitive and
+    always returns uppercase symbols.
 
     Args:
         description (str): The transaction description containing the symbol.
@@ -92,21 +93,22 @@ def extract_symbol(description, currency):
 
     Examples:
         Input: "AAPL - 10.0 shares", currency="USD" → Output: "AAPL-CT"
-        Input: "TSLA - 5.0 shares", currency="CAD" → Output: "TSLA-QH" (CDR mapping)
-        Input: "SHOP - 15.0 shares", currency="CAD" → Output: "SHOP-CT"
-        Input: "NVDA - 8.0 shares", currency="CAD" → Output: "NVDA-QH" (CDR mapping)
+        Input: "tsla - 5.0 shares", currency="CAD" → Output: "TSLA-QH" (CDR mapping)
+        Input: "shop - 15.0 shares", currency="CAD" → Output: "SHOP-CT"
+        Input: "nvda - 8.0 shares", currency="CAD" → Output: "NVDA-QH" (CDR mapping)
 
     Returns:
         str: The extracted symbol with appropriate suffix:
             - CDR symbols (TSLA, DIS, NVDA, AAPL) in CAD get "-QH" suffix
             - All other symbols get "-CT" suffix
+            - Symbol is always returned in uppercase
             - Returns None if symbol extraction fails
     """
     dash_index = description.find('-')
     if dash_index == -1:
         return None
     else:
-        symbol = description[:dash_index].strip()
+        symbol = description[:dash_index].strip().upper()
         CDR_SYMBOLS = ["TSLA", "DIS", "NVDA", "AAPL"]
         if symbol in CDR_SYMBOLS and currency == "CAD":
             return f'{symbol}-QH'

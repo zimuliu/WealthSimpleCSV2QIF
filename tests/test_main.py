@@ -1,7 +1,7 @@
 import unittest
 
 from unittest.mock import patch, mock_open
-from app.main import read_csv_files, extract_account_name, read_config, extract_option_info, extract_unit
+from app.main import read_csv_files, extract_account_name, read_config, extract_option_info, extract_unit, extract_symbol
 
 class TestMain(unittest.TestCase):
     def test_extract_account_name_valid_format(self):
@@ -531,6 +531,103 @@ class TestMain(unittest.TestCase):
         description = "STOCK_A - 7.5 shares"
         result = extract_unit(description)
         self.assertEqual(result, 7.5)
+
+    def test_extract_symbol_standard_symbols_usd(self):
+        """Test extract_symbol with standard symbols in USD currency"""
+        # Test regular symbols with USD - should get -CT suffix
+        result = extract_symbol("AAPL - 10.0 shares", "USD")
+        self.assertEqual(result, "AAPL-CT")
+
+        result = extract_symbol("MSFT - 5.0 shares", "USD")
+        self.assertEqual(result, "MSFT-CT")
+
+        result = extract_symbol("GOOGL - 2.0 shares", "USD")
+        self.assertEqual(result, "GOOGL-CT")
+
+    def test_extract_symbol_standard_symbols_cad(self):
+        """Test extract_symbol with standard (non-CDR) symbols in CAD currency"""
+        # Test non-CDR symbols with CAD - should get -CT suffix
+        result = extract_symbol("SHOP - 15.0 shares", "CAD")
+        self.assertEqual(result, "SHOP-CT")
+
+        result = extract_symbol("RY - 10.0 shares", "CAD")
+        self.assertEqual(result, "RY-CT")
+
+        result = extract_symbol("TD - 8.0 shares", "CAD")
+        self.assertEqual(result, "TD-CT")
+
+    def test_extract_symbol_cdr_symbols_cad(self):
+        """Test extract_symbol with CDR symbols in CAD currency"""
+        # Test CDR symbols (TSLA, DIS, NVDA, AAPL) with CAD - should get -QH suffix
+        result = extract_symbol("TSLA - 5.0 shares", "CAD")
+        self.assertEqual(result, "TSLA-QH")
+
+        result = extract_symbol("DIS - 10.0 shares", "CAD")
+        self.assertEqual(result, "DIS-QH")
+
+        result = extract_symbol("NVDA - 2.0 shares", "CAD")
+        self.assertEqual(result, "NVDA-QH")
+
+        result = extract_symbol("AAPL - 15.0 shares", "CAD")
+        self.assertEqual(result, "AAPL-QH")
+
+    def test_extract_symbol_cdr_symbols_usd(self):
+        """Test extract_symbol with CDR symbols in USD currency"""
+        # CDR symbols with USD should get -CT suffix (not -QH)
+        # Only CDR symbols with CAD currency get -QH suffix
+        result = extract_symbol("TSLA - 5.0 shares", "USD")
+        self.assertEqual(result, "TSLA-CT")
+
+        result = extract_symbol("DIS - 10.0 shares", "USD")
+        self.assertEqual(result, "DIS-CT")
+
+        result = extract_symbol("NVDA - 2.0 shares", "USD")
+        self.assertEqual(result, "NVDA-CT")
+
+        result = extract_symbol("AAPL - 15.0 shares", "USD")
+        self.assertEqual(result, "AAPL-CT")
+
+    def test_extract_symbol_case_insensitive_input(self):
+        """Test extract_symbol with case-insensitive input - should always return uppercase"""
+        # Test lowercase symbols - should be converted to uppercase
+        result = extract_symbol("aapl - 10.0 shares", "USD")
+        self.assertEqual(result, "AAPL-CT")
+
+        result = extract_symbol("tsla - 5.0 shares", "CAD")
+        self.assertEqual(result, "TSLA-QH")  # lowercase tsla becomes TSLA and matches CDR
+
+        result = extract_symbol("shop - 15.0 shares", "CAD")
+        self.assertEqual(result, "SHOP-CT")
+
+        # Test mixed case symbols
+        result = extract_symbol("AaPl - 10.0 shares", "CAD")
+        self.assertEqual(result, "AAPL-QH")
+
+        result = extract_symbol("TsLa - 5.0 shares", "USD")
+        self.assertEqual(result, "TSLA-CT")
+
+    def test_extract_symbol_edge_cases(self):
+        """Test extract_symbol with edge cases and invalid inputs"""
+        # Test with missing dash
+        result = extract_symbol("AAPL 10.0 shares", "USD")
+        self.assertIsNone(result)
+
+        # Test with empty string
+        result = extract_symbol("", "USD")
+        self.assertIsNone(result)
+
+        # Test with multiple dashes - should extract everything before first dash
+        result = extract_symbol("some-stock - 5.0 shares", "USD")
+        self.assertEqual(result, "SOME-CT")
+
+    def test_extract_symbol_currency_case_sensitivity(self):
+        """Test extract_symbol currency case sensitivity"""
+        # Currency comparison is case-sensitive
+        result = extract_symbol("AAPL - 10.0 shares", "cad")
+        self.assertEqual(result, "AAPL-CT")  # lowercase 'cad' != 'CAD'
+
+        result = extract_symbol("aapl - 10.0 shares", "CAD")
+        self.assertEqual(result, "AAPL-QH")  # uppercase 'CAD' matches
 
 if __name__ == '__main__':
     unittest.main()
