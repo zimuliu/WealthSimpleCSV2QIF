@@ -228,9 +228,9 @@ def generate_qif_entry(row, target_currency):
         return f'D{row["date"]}\nNXIn\nT{total}\nO0.00\nCc\nPInterest\nM{row["description"]}\n^'
     elif transaction_type == "NRT":
         return f'D{row["date"]}\nNXOut\nT{total}\nO0.00\nCc\nPUS Non-Resident Tax Withholding\nM{row["description"]}\n^'
-    elif transaction_type in ("TRFOUT", "SPEND", "E_TRFOUT", "EFTOUT", "AFT_OUT"):
+    elif transaction_type in ("TRFOUT", "SPEND", "E_TRFOUT", "EFTOUT", "AFT_OUT", "FEE", "TRFOUTTF"):
         return f'D{row["date"]}\nT-{total}\nO0.00\nCc\nP{row["description"]}\n^'
-    elif transaction_type in ("CASHBACK", "EFT", "INT", "TRFIN", "TRFINTF", "REFUND"):
+    elif transaction_type in ("CASHBACK", "EFT", "INT", "TRFIN", "TRFINTF", "REFUND", "E_TRFIN"):
         return f'D{row["date"]}\nT{total}\nO0.00\nCc\nP{row["description"]}\n^'
     elif transaction_type in ("RECALL", "LOAN", "STKDIS", "STKREORG"):
         return None
@@ -357,7 +357,7 @@ def export_qif_files(account_data, config_filename):
 
         print(account_name)
         if account_name not in config:
-            raise ValueError("Unknown account")
+            raise ValueError(f"Unknown account: {account_name}")
 
         account_config = config[account_name]
         account_type = account_config["type"]
