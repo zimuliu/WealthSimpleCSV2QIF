@@ -1644,20 +1644,26 @@ WK23MTV36CAD-CAD
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_malformed_csv(self, mock_open_file, mock_listdir):
-        """Test read_csv_files with malformed CSV content"""
+        """Test read_csv_files with malformed CSV content - missing amount column"""
         mock_listdir.return_value = [
             "monthly-statement-transactions-MALFORMED123-2025-07-01.csv"
         ]
 
-        # CSV with missing columns
-        csv_content = """date,transaction,description
-2025-07-01,BUY,AAPL - 10.0 shares"""
+        # CSV with missing 'amount' column - should be handled gracefully
+        csv_content = """date,transaction,description,currency
+2025-07-01,BUY,AAPL - 10.0 shares,USD"""
 
         mock_open_file.return_value = mock_open(read_data=csv_content).return_value
 
-        # Should raise KeyError when trying to access missing 'amount' or 'currency' columns
-        with self.assertRaises(KeyError):
-            read_csv_files("malformed_folder")
+        # Should handle missing 'amount' column gracefully by skipping the row
+        result = read_csv_files("malformed_folder")
+
+        # Should have both currency accounts but they should be empty
+        # since rows with missing/empty amount are skipped
+        self.assertIn("MALFORMED123-USD", result)
+        self.assertIn("MALFORMED123-CAD", result)
+        self.assertEqual(len(result["MALFORMED123-USD"]), 0)
+        self.assertEqual(len(result["MALFORMED123-CAD"]), 0)
 
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)

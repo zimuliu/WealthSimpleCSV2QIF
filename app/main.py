@@ -150,7 +150,7 @@ def extract_unit(input_string):
         return None
 
 
-def generate_qif_entry(row, target_currency):
+def generate_qif_entry(row, target_currency, filename=None):
     """
     Generate a QIF entry from a CSV transaction row for the specified currency.
 
@@ -166,6 +166,7 @@ def generate_qif_entry(row, target_currency):
             - 'amount': Transaction amount (string, can be negative)
             - 'currency': Transaction currency (USD or CAD)
         target_currency (str): Currency to filter for ("USD" or "CAD")
+        filename (str, optional): Source filename for error reporting
 
     Examples:
         Stock Purchase:
@@ -188,12 +189,29 @@ def generate_qif_entry(row, target_currency):
         str: Formatted QIF entry string, or None if:
             - Currency doesn't match target_currency
             - Transaction type is in the ignored list (RECALL, LOAN, STKDIS, STKREORG)
+            - Amount is empty or invalid (warning printed)
 
     Raises:
         ValueError: If transaction type is not recognized
     """
     transaction_type = row["transaction"]
-    total = abs(float(row["amount"]))
+
+    # Skip rows with empty or invalid amount values
+    amount_str = row.get("amount", "").strip()
+    if not amount_str:
+        file_info = f" in file '{filename}'" if filename else ""
+        print(f"WARNING: Skipping row with empty amount{file_info}")
+        print(f"  Row data: {dict(row)}")
+        return None
+
+    try:
+        total = abs(float(amount_str))
+    except ValueError:
+        file_info = f" in file '{filename}'" if filename else ""
+        print(f"WARNING: Skipping row with invalid amount '{amount_str}'{file_info}")
+        print(f"  Row data: {dict(row)}")
+        return None
+
     currency = row["currency"]
 
     if currency != target_currency:
@@ -228,7 +246,7 @@ def generate_qif_entry(row, target_currency):
         return f'D{row["date"]}\nNXIn\nT{total}\nO0.00\nCc\nPInterest\nM{row["description"]}\n^'
     elif transaction_type == "NRT":
         return f'D{row["date"]}\nNXOut\nT{total}\nO0.00\nCc\nPUS Non-Resident Tax Withholding\nM{row["description"]}\n^'
-    elif transaction_type in ("TRFOUT", "SPEND", "E_TRFOUT", "EFTOUT", "AFT_OUT", "FEE", "TRFOUTTF"):
+    elif transaction_type in ("TRFOUT", "SPEND", "E_TRFOUT", "EFTOUT", "AFT_OUT", "FEE", "TRFOUTTF", "WD"):
         return f'D{row["date"]}\nT-{total}\nO0.00\nCc\nP{row["description"]}\n^'
     elif transaction_type in ("CASHBACK", "EFT", "INT", "TRFIN", "TRFINTF", "REFUND", "E_TRFIN"):
         return f'D{row["date"]}\nT{total}\nO0.00\nCc\nP{row["description"]}\n^'
@@ -285,7 +303,7 @@ def read_csv_files(input_folder):
                 with open(file_path, "r") as csv_file:
                     reader = csv.DictReader(csv_file)
                     for row in reader:
-                        qif = generate_qif_entry(row, target_currency)
+                        qif = generate_qif_entry(row, target_currency, filename)
                         if qif:
                             transactions_by_account[per_currency_account_name].append(
                                 qif
