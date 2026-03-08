@@ -1,3 +1,11 @@
+# CDR (Canadian Depositary Receipts) symbols that get -QH suffix in CAD
+cdr_symbols:
+  - TSLA
+  - DIS
+  - NVDA
+  - AAPL
+
+# Account configurations
 H12345678CAD-CAD:
   nickname: My-TFSA-CAD
   type: Investment

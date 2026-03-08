@@ -83,38 +83,56 @@ def extract_option_info(description):
     return option_name, contracts, fee
 
 
-def extract_symbol(description, currency):
+def extract_symbol(description, currency, cdr_symbols=None):
     """
     Extract the stock symbol from the given description and apply appropriate suffix.
 
     Handles both regular stocks and Canadian Depositary Receipts (CDRs) with proper
     symbol mapping for QIF compatibility. Symbol extraction is case-insensitive and
-    always returns uppercase symbols.
+    always returns uppercase symbols. Periods in symbols are replaced with hyphens
+    for QIF compatibility (e.g., ETHX.B becomes ETHX-B).
 
     Args:
         description (str): The transaction description containing the symbol.
         currency (str): The transaction currency ("USD" or "CAD").
+        cdr_symbols (list, optional): List of CDR symbols that get "-QH" suffix in CAD.
+                                      Defaults to empty list if not provided.
 
     Examples:
-        Input: "AAPL - 10.0 shares", currency="USD" → Output: "AAPL-CT"
+        Input: "AAPL - 10.0 shares", currency="USD" → Output: "AAPL" (no suffix for USD)
         Input: "tsla - 5.0 shares", currency="CAD" → Output: "TSLA-QH" (CDR mapping)
         Input: "shop - 15.0 shares", currency="CAD" → Output: "SHOP-CT"
         Input: "nvda - 8.0 shares", currency="CAD" → Output: "NVDA-QH" (CDR mapping)
+        Input: "ETHX.B - 5.0 shares", currency="CAD" → Output: "ETHX-B-CT"
 
     Returns:
         str: The extracted symbol with appropriate suffix:
-            - CDR symbols (TSLA, DIS, NVDA, AAPL) in CAD get "-QH" suffix
-            - All other symbols get "-CT" suffix
+            - USD symbols get no suffix
+            - CDR symbols in CAD get "-QH" suffix
+            - All other CAD symbols get "-CT" suffix
+            - Periods in symbols are replaced with hyphens
             - Symbol is always returned in uppercase
             - Returns None if symbol extraction fails
     """
+    if cdr_symbols is None:
+        cdr_symbols = []
+
     dash_index = description.find("-")
     if dash_index == -1:
         return None
     else:
         symbol = description[:dash_index].strip().upper()
-        CDR_SYMBOLS = ["TSLA", "DIS", "NVDA", "AAPL"]
-        if symbol in CDR_SYMBOLS and currency == "CAD":
+        # Replace periods with hyphens for QIF compatibility (e.g., ETHX.B -> ETHX-B)
+        symbol = symbol.replace(".", "-")
+
+        # USD symbols have no suffix
+        if currency == "USD":
+            return symbol
+
+        # CAD symbols get appropriate suffix
+        # Convert cdr_symbols to uppercase for case-insensitive comparison
+        cdr_symbols_upper = [s.upper() for s in cdr_symbols]
+        if symbol in cdr_symbols_upper:
             return f"{symbol}-QH"
         else:
             return f"{symbol}-CT"
@@ -150,7 +168,7 @@ def extract_unit(input_string):
         return None
 
 
-def generate_qif_entry(row, target_currency, filename=None):
+def generate_qif_entry(row, target_currency, filename=None, cdr_symbols=None):
     """
     Generate a QIF entry from a CSV transaction row for the specified currency.
 
@@ -167,6 +185,7 @@ def generate_qif_entry(row, target_currency, filename=None):
             - 'currency': Transaction currency (USD or CAD)
         target_currency (str): Currency to filter for ("USD" or "CAD")
         filename (str, optional): Source filename for error reporting
+        cdr_symbols (list, optional): List of CDR symbols that get "-QH" suffix in CAD.
 
     Examples:
         Stock Purchase:
@@ -218,12 +237,12 @@ def generate_qif_entry(row, target_currency, filename=None):
         return None
 
     if transaction_type == "BUY":
-        symbol = extract_symbol(row["description"], currency)
+        symbol = extract_symbol(row["description"], currency, cdr_symbols)
         unit = extract_unit(row["description"])
         price = total / unit
         return f'D{row["date"]}\nNBuy\nY{symbol}\nI{price}\nQ{unit}\nT{total}\nO0.00\nCc\n^'
     elif transaction_type == "SELL":
-        symbol = extract_symbol(row["description"], currency)
+        symbol = extract_symbol(row["description"], currency, cdr_symbols)
         unit = extract_unit(row["description"])
         price = total / unit
         return f'D{row["date"]}\nNSell\nY{symbol}\nI{price}\nQ{unit}\nT{total}\nO0.00\nCc\n^'
@@ -238,7 +257,7 @@ def generate_qif_entry(row, target_currency, filename=None):
         price = option_total / unit
         return f'D{row["date"]}\nNSell\nY{option_name}\nI{price}\nQ{unit}\nT{total}\nO{fee}\nCc\n^'
     elif transaction_type == "DIV":
-        symbol = extract_symbol(row["description"], currency)
+        symbol = extract_symbol(row["description"], currency, cdr_symbols)
         return f'D{row["date"]}\nNDiv\nY{symbol}\nT{total}\nO0.00\nCc\n^'
     elif transaction_type == "CONT":
         return f'D{row["date"]}\nNXIn\nT{total}\nO0.00\nCc\nPContribution\nM{row["description"]}\n^'
@@ -256,7 +275,7 @@ def generate_qif_entry(row, target_currency, filename=None):
         raise ValueError(f"Invalid transaction type: {transaction_type}")
 
 
-def read_csv_files(input_folder):
+def read_csv_files(input_folder, config_filename):
     """
     Read all CSV files from the input folder and organize transactions by account and currency.
 
@@ -267,6 +286,7 @@ def read_csv_files(input_folder):
     Args:
         input_folder (str): Path to folder containing WealthSimple CSV files.
                            Expected filename format: 'monthly-statement-transactions-{ACCOUNT_ID}-{DATE}.csv'
+        config_filename (str): Path to YAML configuration file containing CDR symbols and account mappings.
 
     Examples:
         Input files:
@@ -289,7 +309,12 @@ def read_csv_files(input_folder):
         - Automatically creates both USD and CAD variants for each account
         - Empty lists are created even if no transactions exist for a currency
         - Account ID is extracted from filename using regex pattern
+        - CDR symbols are loaded from config file for proper symbol suffix handling
     """
+    # Load config to get CDR symbols
+    config = read_config(config_filename)
+    cdr_symbols = config.get("cdr_symbols", [])
+
     transactions_by_account = {}
 
     for filename in os.listdir(input_folder):
@@ -303,7 +328,9 @@ def read_csv_files(input_folder):
                 with open(file_path, "r") as csv_file:
                     reader = csv.DictReader(csv_file)
                     for row in reader:
-                        qif = generate_qif_entry(row, target_currency, filename)
+                        qif = generate_qif_entry(
+                            row, target_currency, filename, cdr_symbols
+                        )
                         if qif:
                             transactions_by_account[per_currency_account_name].append(
                                 qif
@@ -436,7 +463,7 @@ def main():
     )
     args = parser.parse_args()
 
-    csv_data = read_csv_files(args.input_folder)
+    csv_data = read_csv_files(args.input_folder, args.account_config)
     export_qif_files(csv_data, args.account_config)
 
 

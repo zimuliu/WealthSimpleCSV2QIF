@@ -1,4 +1,4 @@
-import os
+ import os
 import shutil
 import tempfile
 import unittest
@@ -126,16 +126,18 @@ class TestMain(unittest.TestCase):
         self.assertIsNone(result)
 
     @patch("os.listdir")
+    @patch("app.main.read_config")
     @patch(
         "builtins.open",
         new_callable=mock_open,
         read_data="date,transaction,description,amount,currency\n2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,USD\n",
     )
-    def test_read_csv_files(self, mock_open_file, mock_listdir):
+    def test_read_csv_files(self, mock_open_file, mock_read_config, mock_listdir):
         mock_listdir.return_value = [
             "monthly-statement-transactions-TEST123456-2025-07-01.csv"
         ]
-        csv_data = read_csv_files("input_folder")
+        mock_read_config.return_value = {"cdr_symbols": ["TSLA", "DIS", "NVDA", "AAPL"]}
+        csv_data = read_csv_files("input_folder", "dummy_config.yml")
         # Should have 2 accounts (TEST123456-USD and TEST123456-CAD)
         self.assertEqual(len(csv_data), 2)
         # Check that both currency accounts exist
@@ -551,79 +553,83 @@ class TestMain(unittest.TestCase):
 
     def test_extract_symbol_standard_symbols_usd(self):
         """Test extract_symbol with standard symbols in USD currency"""
-        # Test regular symbols with USD - should get -CT suffix
+        # Test regular symbols with USD - should have no suffix
         result = extract_symbol("AAPL - 10.0 shares", "USD")
-        self.assertEqual(result, "AAPL-CT")
+        self.assertEqual(result, "AAPL")
 
         result = extract_symbol("MSFT - 5.0 shares", "USD")
-        self.assertEqual(result, "MSFT-CT")
+        self.assertEqual(result, "MSFT")
 
         result = extract_symbol("GOOGL - 2.0 shares", "USD")
-        self.assertEqual(result, "GOOGL-CT")
+        self.assertEqual(result, "GOOGL")
 
     def test_extract_symbol_standard_symbols_cad(self):
         """Test extract_symbol with standard (non-CDR) symbols in CAD currency"""
         # Test non-CDR symbols with CAD - should get -CT suffix
-        result = extract_symbol("SHOP - 15.0 shares", "CAD")
+        cdr_symbols = ["TSLA", "DIS", "NVDA", "AAPL"]
+        result = extract_symbol("SHOP - 15.0 shares", "CAD", cdr_symbols)
         self.assertEqual(result, "SHOP-CT")
 
-        result = extract_symbol("RY - 10.0 shares", "CAD")
+        result = extract_symbol("RY - 10.0 shares", "CAD", cdr_symbols)
         self.assertEqual(result, "RY-CT")
 
-        result = extract_symbol("TD - 8.0 shares", "CAD")
+        result = extract_symbol("TD - 8.0 shares", "CAD", cdr_symbols)
         self.assertEqual(result, "TD-CT")
 
     def test_extract_symbol_cdr_symbols_cad(self):
         """Test extract_symbol with CDR symbols in CAD currency"""
         # Test CDR symbols (TSLA, DIS, NVDA, AAPL) with CAD - should get -QH suffix
-        result = extract_symbol("TSLA - 5.0 shares", "CAD")
+        cdr_symbols = ["TSLA", "DIS", "NVDA", "AAPL"]
+        result = extract_symbol("TSLA - 5.0 shares", "CAD", cdr_symbols)
         self.assertEqual(result, "TSLA-QH")
 
-        result = extract_symbol("DIS - 10.0 shares", "CAD")
+        result = extract_symbol("DIS - 10.0 shares", "CAD", cdr_symbols)
         self.assertEqual(result, "DIS-QH")
 
-        result = extract_symbol("NVDA - 2.0 shares", "CAD")
+        result = extract_symbol("NVDA - 2.0 shares", "CAD", cdr_symbols)
         self.assertEqual(result, "NVDA-QH")
 
-        result = extract_symbol("AAPL - 15.0 shares", "CAD")
+        result = extract_symbol("AAPL - 15.0 shares", "CAD", cdr_symbols)
         self.assertEqual(result, "AAPL-QH")
 
     def test_extract_symbol_cdr_symbols_usd(self):
         """Test extract_symbol with CDR symbols in USD currency"""
-        # CDR symbols with USD should get -CT suffix (not -QH)
+        # CDR symbols with USD should have no suffix
         # Only CDR symbols with CAD currency get -QH suffix
-        result = extract_symbol("TSLA - 5.0 shares", "USD")
-        self.assertEqual(result, "TSLA-CT")
+        cdr_symbols = ["TSLA", "DIS", "NVDA", "AAPL"]
+        result = extract_symbol("TSLA - 5.0 shares", "USD", cdr_symbols)
+        self.assertEqual(result, "TSLA")
 
-        result = extract_symbol("DIS - 10.0 shares", "USD")
-        self.assertEqual(result, "DIS-CT")
+        result = extract_symbol("DIS - 10.0 shares", "USD", cdr_symbols)
+        self.assertEqual(result, "DIS")
 
-        result = extract_symbol("NVDA - 2.0 shares", "USD")
-        self.assertEqual(result, "NVDA-CT")
+        result = extract_symbol("NVDA - 2.0 shares", "USD", cdr_symbols)
+        self.assertEqual(result, "NVDA")
 
-        result = extract_symbol("AAPL - 15.0 shares", "USD")
-        self.assertEqual(result, "AAPL-CT")
+        result = extract_symbol("AAPL - 15.0 shares", "USD", cdr_symbols)
+        self.assertEqual(result, "AAPL")
 
     def test_extract_symbol_case_insensitive_input(self):
         """Test extract_symbol with case-insensitive input - should always return uppercase"""
+        cdr_symbols = ["TSLA", "DIS", "NVDA", "AAPL"]
         # Test lowercase symbols - should be converted to uppercase
-        result = extract_symbol("aapl - 10.0 shares", "USD")
-        self.assertEqual(result, "AAPL-CT")
+        result = extract_symbol("aapl - 10.0 shares", "USD", cdr_symbols)
+        self.assertEqual(result, "AAPL")
 
-        result = extract_symbol("tsla - 5.0 shares", "CAD")
+        result = extract_symbol("tsla - 5.0 shares", "CAD", cdr_symbols)
         self.assertEqual(
             result, "TSLA-QH"
         )  # lowercase tsla becomes TSLA and matches CDR
 
-        result = extract_symbol("shop - 15.0 shares", "CAD")
+        result = extract_symbol("shop - 15.0 shares", "CAD", cdr_symbols)
         self.assertEqual(result, "SHOP-CT")
 
         # Test mixed case symbols
-        result = extract_symbol("AaPl - 10.0 shares", "CAD")
+        result = extract_symbol("AaPl - 10.0 shares", "CAD", cdr_symbols)
         self.assertEqual(result, "AAPL-QH")
 
-        result = extract_symbol("TsLa - 5.0 shares", "USD")
-        self.assertEqual(result, "TSLA-CT")
+        result = extract_symbol("TsLa - 5.0 shares", "USD", cdr_symbols)
+        self.assertEqual(result, "TSLA")
 
     def test_extract_symbol_edge_cases(self):
         """Test extract_symbol with edge cases and invalid inputs"""
@@ -637,16 +643,43 @@ class TestMain(unittest.TestCase):
 
         # Test with multiple dashes - should extract everything before first dash
         result = extract_symbol("some-stock - 5.0 shares", "USD")
-        self.assertEqual(result, "SOME-CT")
+        self.assertEqual(result, "SOME")
 
     def test_extract_symbol_currency_case_sensitivity(self):
         """Test extract_symbol currency case sensitivity"""
+        cdr_symbols = ["TSLA", "DIS", "NVDA", "AAPL"]
         # Currency comparison is case-sensitive
-        result = extract_symbol("AAPL - 10.0 shares", "cad")
+        result = extract_symbol("AAPL - 10.0 shares", "cad", cdr_symbols)
         self.assertEqual(result, "AAPL-CT")  # lowercase 'cad' != 'CAD'
 
-        result = extract_symbol("aapl - 10.0 shares", "CAD")
+        result = extract_symbol("aapl - 10.0 shares", "CAD", cdr_symbols)
         self.assertEqual(result, "AAPL-QH")  # uppercase 'CAD' matches
+
+    def test_extract_symbol_period_replacement(self):
+        """Test extract_symbol replaces periods with hyphens"""
+        cdr_symbols = ["TSLA", "DIS", "NVDA", "AAPL"]
+        # Test symbol with period - should be replaced with hyphen
+        result = extract_symbol("ETHX.B - 5.0 shares", "CAD", cdr_symbols)
+        self.assertEqual(result, "ETHX-B-CT")
+
+        result = extract_symbol("BRK.A - 1.0 shares", "USD", cdr_symbols)
+        self.assertEqual(result, "BRK-A")
+
+        result = extract_symbol("brk.b - 2.0 shares", "CAD", cdr_symbols)
+        self.assertEqual(result, "BRK-B-CT")
+
+    def test_extract_symbol_without_cdr_symbols(self):
+        """Test extract_symbol without CDR symbols list"""
+        # Without CDR symbols, all CAD symbols get -CT suffix
+        result = extract_symbol("TSLA - 5.0 shares", "CAD")
+        self.assertEqual(result, "TSLA-CT")
+
+        result = extract_symbol("AAPL - 10.0 shares", "CAD", [])
+        self.assertEqual(result, "AAPL-CT")
+
+        # USD symbols still have no suffix
+        result = extract_symbol("AAPL - 10.0 shares", "USD")
+        self.assertEqual(result, "AAPL")
 
     # Tests for generate_qif_entry function
     def test_generate_qif_entry_buy_transaction_usd(self):
@@ -659,7 +692,7 @@ class TestMain(unittest.TestCase):
             "currency": "USD",
         }
         result = generate_qif_entry(row, "USD")
-        expected = "D2025-07-15\nNBuy\nYAAPL-CT\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^"
+        expected = "D2025-07-15\nNBuy\nYAAPL\nI150.0\nQ10.0\nT1500.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_buy_transaction_cad(self):
@@ -698,7 +731,7 @@ class TestMain(unittest.TestCase):
             "currency": "USD",
         }
         result = generate_qif_entry(row, "USD")
-        expected = "D2025-07-18\nNSell\nYMSFT-CT\nI300.0\nQ8.0\nT2400.0\nO0.00\nCc\n^"
+        expected = "D2025-07-18\nNSell\nYMSFT\nI300.0\nQ8.0\nT2400.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_sell_transaction_cad(self):
@@ -750,7 +783,7 @@ class TestMain(unittest.TestCase):
             "currency": "USD",
         }
         result = generate_qif_entry(row, "USD")
-        expected = "D2025-07-20\nNDiv\nYAAPL-CT\nT25.5\nO0.00\nCc\n^"
+        expected = "D2025-07-20\nNDiv\nYAAPL\nT25.5\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     def test_generate_qif_entry_dividend_cad(self):
@@ -1032,7 +1065,7 @@ class TestMain(unittest.TestCase):
             "currency": "USD",
         }
         result = generate_qif_entry(row, "USD")
-        expected = "D2025-08-17\nNBuy\nYGOOGL-CT\nI2500.3\nQ2.5\nT6250.75\nO0.00\nCc\n^"
+        expected = "D2025-08-17\nNBuy\nYGOOGL\nI2500.3\nQ2.5\nT6250.75\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
         # Test fractional options contracts and fees
@@ -1058,7 +1091,7 @@ class TestMain(unittest.TestCase):
             "currency": "USD",
         }
         result = generate_qif_entry(row, "USD")
-        expected = "D2025-08-19\nNBuy\nYAMZN-CT\nI3500.0\nQ1.0\nT3500.0\nO0.00\nCc\n^"
+        expected = "D2025-08-19\nNBuy\nYAMZN\nI3500.0\nQ1.0\nT3500.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
         # SELL transactions typically have positive amounts in CSV
@@ -1070,7 +1103,7 @@ class TestMain(unittest.TestCase):
             "currency": "USD",
         }
         result = generate_qif_entry(row, "USD")
-        expected = "D2025-08-20\nNSell\nYAMZN-CT\nI3600.0\nQ1.0\nT3600.0\nO0.00\nCc\n^"
+        expected = "D2025-08-20\nNSell\nYAMZN\nI3600.0\nQ1.0\nT3600.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
     # Tests for read_config function
@@ -1352,8 +1385,16 @@ WK23MTV36CAD-CAD
             # Verify the structure matches expected format
             self.assertIsInstance(result, dict)
 
+            # Check for cdr_symbols configuration
+            self.assertIn("cdr_symbols", result)
+            self.assertIsInstance(result["cdr_symbols"], list)
+
             # Check that all accounts have required fields
             for account_id, account_config in result.items():
+                # Skip non-account entries like cdr_symbols
+                if account_id == "cdr_symbols":
+                    continue
+
                 self.assertIn("nickname", account_config)
                 self.assertIn("type", account_config)
                 self.assertIsInstance(account_config["nickname"], str)
