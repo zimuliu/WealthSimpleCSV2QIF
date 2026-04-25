@@ -1,4 +1,4 @@
- import os
+import os
 import shutil
 import tempfile
 import unittest
@@ -137,7 +137,7 @@ class TestMain(unittest.TestCase):
             "monthly-statement-transactions-TEST123456-2025-07-01.csv"
         ]
         mock_read_config.return_value = {"cdr_symbols": ["TSLA", "DIS", "NVDA", "AAPL"]}
-        csv_data = read_csv_files("input_folder", "dummy_config.yml")
+        csv_data, source_files = read_csv_files("input_folder", "dummy_config.yml")
         # Should have 2 accounts (TEST123456-USD and TEST123456-CAD)
         self.assertEqual(len(csv_data), 2)
         # Check that both currency accounts exist
@@ -146,6 +146,13 @@ class TestMain(unittest.TestCase):
         # USD account should have 1 transaction, CAD should be empty
         self.assertEqual(len(csv_data["TEST123456-USD"]), 1)
         self.assertEqual(len(csv_data["TEST123456-CAD"]), 0)
+        # Check source files tracking
+        self.assertIn("TEST123456-USD", source_files)
+        self.assertIn("TEST123456-CAD", source_files)
+        self.assertIn(
+            "monthly-statement-transactions-TEST123456-2025-07-01.csv",
+            source_files["TEST123456-USD"],
+        )
 
     def test_extract_option_info_valid_descriptions(self):
         """Test extract_option_info with valid option descriptions"""
@@ -1417,9 +1424,10 @@ WK23MTV36CAD-CAD
             self.skipTest("accounts.yml file not found in project directory")
 
     # Tests for read_csv_files function
+    @patch("app.main.read_config")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
-    def test_read_csv_files_multiple_files(self, mock_open_file, mock_listdir):
+    def test_read_csv_files_multiple_files(self, mock_open_file, mock_listdir, mock_read_config):
         """Test read_csv_files with multiple CSV files"""
         # Mock directory listing with multiple CSV files
         mock_listdir.return_value = [
@@ -1443,8 +1451,9 @@ WK23MTV36CAD-CAD
                 return mock_open(read_data="").return_value
 
         mock_open_file.side_effect = mock_open_side_effect
+        mock_read_config.return_value = {"cdr_symbols": ["TSLA", "DIS", "NVDA", "AAPL"]}
 
-        result = read_csv_files("test_input_folder")
+        result, source_files = read_csv_files("test_input_folder", "dummy_config.yml")
 
         # Should have 4 accounts (2 files × 2 currencies each)
         expected_accounts = [
@@ -1470,29 +1479,34 @@ WK23MTV36CAD-CAD
         # ACCOUNT2-CAD should be empty
         self.assertEqual(len(result["ACCOUNT2-CAD"]), 0)
 
+    @patch("app.main.read_config")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
-    def test_read_csv_files_empty_directory(self, mock_open_file, mock_listdir):
+    def test_read_csv_files_empty_directory(self, mock_open_file, mock_listdir, mock_read_config):
         """Test read_csv_files with empty directory"""
         mock_listdir.return_value = []
+        mock_read_config.return_value = {"cdr_symbols": []}
 
-        result = read_csv_files("empty_folder")
+        result, source_files = read_csv_files("empty_folder", "dummy_config.yml")
 
         self.assertEqual(result, {})
 
+    @patch("app.main.read_config")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
-    def test_read_csv_files_no_csv_files(self, mock_open_file, mock_listdir):
+    def test_read_csv_files_no_csv_files(self, mock_open_file, mock_listdir, mock_read_config):
         """Test read_csv_files with directory containing no CSV files"""
         mock_listdir.return_value = ["file1.txt", "file2.pdf", "readme.md"]
+        mock_read_config.return_value = {"cdr_symbols": []}
 
-        result = read_csv_files("no_csv_folder")
+        result, source_files = read_csv_files("no_csv_folder", "dummy_config.yml")
 
         self.assertEqual(result, {})
 
+    @patch("app.main.read_config")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
-    def test_read_csv_files_invalid_filename_format(self, mock_open_file, mock_listdir):
+    def test_read_csv_files_invalid_filename_format(self, mock_open_file, mock_listdir, mock_read_config):
         """Test read_csv_files with CSV files that don't match expected format"""
         mock_listdir.return_value = [
             "invalid-format.csv",
@@ -1500,20 +1514,18 @@ WK23MTV36CAD-CAD
             "daily-statement-transactions-ACCOUNT1-2025-07-01.csv",  # Wrong prefix
         ]
 
-        result = read_csv_files("invalid_folder")
+        mock_read_config.return_value = {"cdr_symbols": []}
 
-        # Should be empty since no files match the expected format
-        # Note: extract_account_name returns None for invalid formats, which creates 'None-USD' and 'None-CAD' keys
-        # But since the files don't match the pattern, they won't be processed, so these should be empty
-        expected_keys = {"None-USD", "None-CAD"}
-        self.assertEqual(set(result.keys()), expected_keys)
-        self.assertEqual(len(result["None-USD"]), 0)
-        self.assertEqual(len(result["None-CAD"]), 0)
+        result, source_files = read_csv_files("invalid_folder", "dummy_config.yml")
 
+        # Files that don't match the expected filename pattern are skipped entirely
+        self.assertEqual(result, {})
+
+    @patch("app.main.read_config")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_mixed_currencies_single_file(
-        self, mock_open_file, mock_listdir
+        self, mock_open_file, mock_listdir, mock_read_config
     ):
         """Test read_csv_files with single file containing mixed currency transactions"""
         mock_listdir.return_value = [
@@ -1533,8 +1545,9 @@ WK23MTV36CAD-CAD
             return mock_open(read_data=csv_content).return_value
 
         mock_open_file.side_effect = mock_open_side_effect
+        mock_read_config.return_value = {"cdr_symbols": ["TSLA", "DIS", "NVDA", "AAPL"]}
 
-        result = read_csv_files("mixed_folder")
+        result, source_files = read_csv_files("mixed_folder", "dummy_config.yml")
 
         # Should have 2 accounts (USD and CAD)
         self.assertIn("MIXED123-USD", result)
@@ -1546,9 +1559,10 @@ WK23MTV36CAD-CAD
         # CAD account should have 3 transactions (SHOP BUY, TD DIV, CONT)
         self.assertEqual(len(result["MIXED123-CAD"]), 3)
 
+    @patch("app.main.read_config")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
-    def test_read_csv_files_empty_csv_file(self, mock_open_file, mock_listdir):
+    def test_read_csv_files_empty_csv_file(self, mock_open_file, mock_listdir, mock_read_config):
         """Test read_csv_files with empty CSV file"""
         mock_listdir.return_value = [
             "monthly-statement-transactions-EMPTY123-2025-07-01.csv"
@@ -1557,8 +1571,9 @@ WK23MTV36CAD-CAD
         # CSV with only headers
         csv_content = "date,transaction,description,amount,currency\n"
         mock_open_file.return_value = mock_open(read_data=csv_content).return_value
+        mock_read_config.return_value = {"cdr_symbols": []}
 
-        result = read_csv_files("empty_csv_folder")
+        result, source_files = read_csv_files("empty_csv_folder", "dummy_config.yml")
 
         # Should have both currency accounts but they should be empty
         self.assertIn("EMPTY123-USD", result)
@@ -1566,9 +1581,10 @@ WK23MTV36CAD-CAD
         self.assertEqual(len(result["EMPTY123-USD"]), 0)
         self.assertEqual(len(result["EMPTY123-CAD"]), 0)
 
+    @patch("app.main.read_config")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
-    def test_read_csv_files_ignored_transactions(self, mock_open_file, mock_listdir):
+    def test_read_csv_files_ignored_transactions(self, mock_open_file, mock_listdir, mock_read_config):
         """Test read_csv_files with transactions that should be ignored"""
         mock_listdir.return_value = [
             "monthly-statement-transactions-IGNORE123-2025-07-01.csv"
@@ -1583,8 +1599,9 @@ WK23MTV36CAD-CAD
 2025-07-06,SELL,MSFT - 5.0 shares,1000.00,USD"""
 
         mock_open_file.return_value = mock_open(read_data=csv_content).return_value
+        mock_read_config.return_value = {"cdr_symbols": ["TSLA", "DIS", "NVDA", "AAPL"]}
 
-        result = read_csv_files("ignore_folder")
+        result, source_files = read_csv_files("ignore_folder", "dummy_config.yml")
 
         # Should only have 2 transactions (BUY and SELL), ignored transactions should not appear
         self.assertEqual(len(result["IGNORE123-USD"]), 2)
@@ -1595,9 +1612,10 @@ WK23MTV36CAD-CAD
         self.assertIn("AAPL-CT", usd_transactions[0])
         self.assertIn("MSFT-CT", usd_transactions[1])
 
+    @patch("app.main.read_config")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
-    def test_read_csv_files_options_transactions(self, mock_open_file, mock_listdir):
+    def test_read_csv_files_options_transactions(self, mock_open_file, mock_listdir, mock_read_config):
         """Test read_csv_files with options trading transactions"""
         mock_listdir.return_value = [
             "monthly-statement-transactions-OPTIONS123-2025-07-01.csv"
@@ -1608,8 +1626,9 @@ WK23MTV36CAD-CAD
 2025-07-25,SELLTOCLOSE,AAPL 180.00 USD PUT 2025-07-30: Sold 1 contract (executed at 2025-07-25) Fee: $0.75,150.25,USD"""
 
         mock_open_file.return_value = mock_open(read_data=csv_content).return_value
+        mock_read_config.return_value = {"cdr_symbols": ["TSLA", "DIS", "NVDA", "AAPL"]}
 
-        result = read_csv_files("options_folder")
+        result, source_files = read_csv_files("options_folder", "dummy_config.yml")
 
         # Should have 2 options transactions in USD account
         self.assertEqual(len(result["OPTIONS123-USD"]), 2)
@@ -1620,10 +1639,11 @@ WK23MTV36CAD-CAD
         self.assertIn("SPY 450.00 USD CALL 2025-07-25", usd_transactions[0])
         self.assertIn("AAPL 180.00 USD PUT 2025-07-30", usd_transactions[1])
 
+    @patch("app.main.read_config")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_various_transaction_types(
-        self, mock_open_file, mock_listdir
+        self, mock_open_file, mock_listdir, mock_read_config
     ):
         """Test read_csv_files with various transaction types"""
         mock_listdir.return_value = [
@@ -1643,8 +1663,9 @@ WK23MTV36CAD-CAD
 2025-07-10,INT,Interest payment,8.50,USD"""
 
         mock_open_file.return_value = mock_open(read_data=csv_content).return_value
+        mock_read_config.return_value = {"cdr_symbols": ["TSLA", "DIS", "NVDA", "AAPL"]}
 
-        result = read_csv_files("various_folder")
+        result, source_files = read_csv_files("various_folder", "dummy_config.yml")
 
         # Should have 10 transactions in USD account
         self.assertEqual(len(result["VARIOUS123-USD"]), 10)
@@ -1668,7 +1689,7 @@ WK23MTV36CAD-CAD
         mock_listdir.side_effect = FileNotFoundError("Directory not found")
 
         with self.assertRaises(FileNotFoundError):
-            read_csv_files("nonexistent_folder")
+            read_csv_files("nonexistent_folder", "dummy_config.yml")
 
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
@@ -1680,11 +1701,12 @@ WK23MTV36CAD-CAD
         mock_open_file.side_effect = IOError("Permission denied")
 
         with self.assertRaises(IOError):
-            read_csv_files("error_folder")
+            read_csv_files("error_folder", "dummy_config.yml")
 
+    @patch("app.main.read_config")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
-    def test_read_csv_files_malformed_csv(self, mock_open_file, mock_listdir):
+    def test_read_csv_files_malformed_csv(self, mock_open_file, mock_listdir, mock_read_config):
         """Test read_csv_files with malformed CSV content - missing amount column"""
         mock_listdir.return_value = [
             "monthly-statement-transactions-MALFORMED123-2025-07-01.csv"
@@ -1696,8 +1718,10 @@ WK23MTV36CAD-CAD
 
         mock_open_file.return_value = mock_open(read_data=csv_content).return_value
 
+        mock_read_config.return_value = {"cdr_symbols": []}
+
         # Should handle missing 'amount' column gracefully by skipping the row
-        result = read_csv_files("malformed_folder")
+        result, source_files = read_csv_files("malformed_folder", "dummy_config.yml")
 
         # Should have both currency accounts but they should be empty
         # since rows with missing/empty amount are skipped
@@ -1706,9 +1730,10 @@ WK23MTV36CAD-CAD
         self.assertEqual(len(result["MALFORMED123-USD"]), 0)
         self.assertEqual(len(result["MALFORMED123-CAD"]), 0)
 
+    @patch("app.main.read_config")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
-    def test_read_csv_files_cdr_symbol_handling(self, mock_open_file, mock_listdir):
+    def test_read_csv_files_cdr_symbol_handling(self, mock_open_file, mock_listdir, mock_read_config):
         """Test read_csv_files with CDR symbols in different currencies"""
         mock_listdir.return_value = [
             "monthly-statement-transactions-CDR123-2025-07-01.csv"
@@ -1725,8 +1750,9 @@ WK23MTV36CAD-CAD
             return mock_open(read_data=csv_content).return_value
 
         mock_open_file.side_effect = mock_open_side_effect
+        mock_read_config.return_value = {"cdr_symbols": ["TSLA", "DIS", "NVDA", "AAPL"]}
 
-        result = read_csv_files("cdr_folder")
+        result, source_files = read_csv_files("cdr_folder", "dummy_config.yml")
 
         # Verify we have both currency accounts
         self.assertIn("CDR123-CAD", result)

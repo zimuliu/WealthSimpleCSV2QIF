@@ -265,9 +265,9 @@ def generate_qif_entry(row, target_currency, filename=None, cdr_symbols=None):
         return f'D{row["date"]}\nNXIn\nT{total}\nO0.00\nCc\nPInterest\nM{row["description"]}\n^'
     elif transaction_type == "NRT":
         return f'D{row["date"]}\nNXOut\nT{total}\nO0.00\nCc\nPUS Non-Resident Tax Withholding\nM{row["description"]}\n^'
-    elif transaction_type in ("TRFOUT", "SPEND", "E_TRFOUT", "EFTOUT", "AFT_OUT", "FEE", "TRFOUTTF", "WD"):
+    elif transaction_type in ("TRFOUT", "SPEND", "E_TRFOUT", "EFTOUT", "AFT_OUT", "FEE", "TRFOUTTF", "WD", "OBP_OUT"):
         return f'D{row["date"]}\nT-{total}\nO0.00\nCc\nP{row["description"]}\n^'
-    elif transaction_type in ("CASHBACK", "EFT", "INT", "TRFIN", "TRFINTF", "REFUND", "E_TRFIN"):
+    elif transaction_type in ("CASHBACK", "EFT", "INT", "TRFIN", "TRFINTF", "REFUND", "E_TRFIN", "GIVEAWAY", "AFT_IN"):
         return f'D{row["date"]}\nT{total}\nO0.00\nCc\nP{row["description"]}\n^'
     elif transaction_type in ("RECALL", "LOAN", "STKDIS", "STKREORG"):
         return None
@@ -316,13 +316,22 @@ def read_csv_files(input_folder, config_filename):
     cdr_symbols = config.get("cdr_symbols", [])
 
     transactions_by_account = {}
+    source_files_by_account = {}
 
     for filename in os.listdir(input_folder):
         if filename.endswith(".csv"):
             account_name = extract_account_name(filename)
+            if account_name is None:
+                print(
+                    f"WARNING: Skipping '{filename}' - does not match expected "
+                    f"filename pattern 'monthly-statement-transactions-{{ACCOUNT_NAME}}-{{DATE}}.csv'"
+                )
+                continue
             for target_currency in ["USD", "CAD"]:
                 per_currency_account_name = f"{account_name}-{target_currency}"
                 transactions_by_account.setdefault(per_currency_account_name, [])
+                source_files_by_account.setdefault(per_currency_account_name, set())
+                source_files_by_account[per_currency_account_name].add(filename)
 
                 file_path = os.path.join(input_folder, filename)
                 with open(file_path, "r") as csv_file:
@@ -335,10 +344,10 @@ def read_csv_files(input_folder, config_filename):
                             transactions_by_account[per_currency_account_name].append(
                                 qif
                             )
-    return transactions_by_account
+    return transactions_by_account, source_files_by_account
 
 
-def export_qif_files(account_data, config_filename):
+def export_qif_files(account_data, config_filename, source_files_by_account=None):
     """
     Export individual QIF files for each account in the account data dictionary.
 
@@ -402,7 +411,12 @@ def export_qif_files(account_data, config_filename):
 
         print(account_name)
         if account_name not in config:
-            raise ValueError(f"Unknown account: {account_name}")
+            source_files = sorted(source_files_by_account.get(account_name, set())) if source_files_by_account else []
+            files_info = "\n  Related CSV files:\n" + "\n".join(f"    - {f}" for f in source_files) if source_files else ""
+            raise ValueError(
+                f"Unknown account: {account_name}\n"
+                f"  Please add this account to your accounts config file.{files_info}"
+            )
 
         account_config = config[account_name]
         account_type = account_config["type"]
@@ -463,8 +477,8 @@ def main():
     )
     args = parser.parse_args()
 
-    csv_data = read_csv_files(args.input_folder, args.account_config)
-    export_qif_files(csv_data, args.account_config)
+    csv_data, source_files = read_csv_files(args.input_folder, args.account_config)
+    export_qif_files(csv_data, args.account_config, source_files)
 
 
 if __name__ == "__main__":
