@@ -5,6 +5,202 @@ import re
 
 import yaml
 
+# Constants for CSV format types
+FORMAT_MONTHLY_STATEMENT = "monthly_statement"
+FORMAT_ACTIVITIES_EXPORT = "activities_export"
+
+# Activities export column names
+ACTIVITIES_COLUMNS = [
+    "transaction_date", "settlement_date", "account_id", "account_type",
+    "activity_type", "activity_sub_type", "direction", "symbol", "name",
+    "currency", "quantity", "unit_price", "commission", "net_cash_amount"
+]
+
+
+def detect_csv_format(filepath):
+    """
+    Detect the format of a CSV file by examining its headers.
+
+    Args:
+        filepath (str): Path to the CSV file.
+
+    Returns:
+        str: FORMAT_MONTHLY_STATEMENT or FORMAT_ACTIVITIES_EXPORT
+
+    Raises:
+        ValueError: If the CSV format is not recognized.
+    """
+    with open(filepath, "r") as f:
+        reader = csv.reader(f)
+        try:
+            headers = next(reader)
+        except StopIteration:
+            raise ValueError(f"Empty CSV file: {filepath}")
+
+    # Strip whitespace and BOM from headers
+    headers = [h.strip().strip("\ufeff") for h in headers]
+
+    if "transaction_date" in headers and "activity_type" in headers:
+        return FORMAT_ACTIVITIES_EXPORT
+    elif "date" in headers and "transaction" in headers:
+        return FORMAT_MONTHLY_STATEMENT
+    else:
+        raise ValueError(
+            f"Unrecognized CSV format in '{filepath}'. "
+            f"Headers: {headers}"
+        )
+
+
+def map_activities_transaction_type(activity_type, activity_sub_type, net_cash_amount):
+    """
+    Map activities export activity_type and activity_sub_type to the legacy transaction type.
+
+    Args:
+        activity_type (str): The activity_type from the new format (e.g., 'Trade', 'MoneyMovement').
+        activity_sub_type (str): The activity_sub_type from the new format (e.g., 'BUY', 'TRANSFER').
+        net_cash_amount (float): The net cash amount (used to determine direction for some types).
+
+    Returns:
+        str: The legacy transaction type string (e.g., 'BUY', 'SELL', 'EFT', 'INT').
+    """
+    if activity_type == "Trade":
+        if activity_sub_type == "BUY":
+            return "BUY"
+        elif activity_sub_type == "SELL":
+            return "SELL"
+        else:
+            return activity_sub_type
+
+    elif activity_type == "Dividend":
+        return "DIV"
+
+    elif activity_type == "Interest":
+        return "INT"
+
+    elif activity_type == "Fee":
+        return "FEE"
+
+    elif activity_type == "BonusPayment":
+        if activity_sub_type == "CASHBACK":
+            return "CASHBACK"
+        elif activity_sub_type == "GIVEAWAY":
+            return "GIVEAWAY"
+        else:
+            return activity_sub_type
+
+    elif activity_type == "MoneyMovement":
+        sub = activity_sub_type.upper() if activity_sub_type else ""
+        if sub == "EFT":
+            if net_cash_amount < 0:
+                return "EFTOUT"
+            else:
+                return "EFT"
+        elif sub == "TRANSFER":
+            if net_cash_amount < 0:
+                return "TRFOUT"
+            else:
+                return "TRFIN"
+        elif sub == "TRANSFER_TF":
+            if net_cash_amount < 0:
+                return "TRFOUTTF"
+            else:
+                return "TRFINTF"
+        elif sub in ("E_TRFOUT", "EFTOUT", "AFT_OUT", "OBP_OUT", "SPEND"):
+            return sub
+        elif sub in ("E_TRFIN", "AFT_IN"):
+            return sub
+        else:
+            # Fallback: determine by amount sign
+            if net_cash_amount < 0:
+                return "TRFOUT"
+            else:
+                return "TRFIN"
+
+    else:
+        return f"{activity_type}_{activity_sub_type}" if activity_sub_type else activity_type
+
+
+def convert_activities_row_to_legacy(row):
+    """
+    Convert an activities export CSV row to the legacy format expected by generate_qif_entry.
+
+    The new format has structured columns for symbol, quantity, unit_price, commission,
+    while the old format encodes this information in the 'description' field.
+
+    Args:
+        row (dict): A row from the activities export CSV with keys matching ACTIVITIES_COLUMNS.
+
+    Returns:
+        dict: A row in the legacy format with keys: 'date', 'transaction', 'description',
+              'amount', 'currency'. Returns None if the row should be skipped.
+    """
+    net_cash_str = (row.get("net_cash_amount") or "").strip()
+    if not net_cash_str:
+        return None
+
+    try:
+        net_cash_amount = float(net_cash_str)
+    except ValueError:
+        return None
+
+    activity_type = (row.get("activity_type") or "").strip()
+    activity_sub_type = (row.get("activity_sub_type") or "").strip()
+    symbol = (row.get("symbol") or "").strip()
+    name = (row.get("name") or "").strip()
+    quantity_str = (row.get("quantity") or "").strip()
+    unit_price_str = (row.get("unit_price") or "").strip()
+    commission_str = (row.get("commission") or "").strip()
+    currency = (row.get("currency") or "").strip()
+    date = (row.get("transaction_date") or "").strip()
+
+    transaction_type = map_activities_transaction_type(
+        activity_type, activity_sub_type, net_cash_amount
+    )
+
+    # Build description based on transaction type
+    if activity_type == "Trade":
+        # For trade transactions, build the "SYMBOL - QUANTITY shares" description
+        quantity = float(quantity_str) if quantity_str else 0
+        # Use absolute value for quantity in description
+        abs_quantity = abs(quantity)
+        description = f"{symbol} - {abs_quantity} shares"
+    elif activity_type == "Dividend":
+        description = f"{symbol} - {name}" if name else f"{symbol} - Dividend"
+    elif activity_type == "Interest":
+        description = "Interest earned"
+    elif activity_type == "Fee":
+        description = "Account fee"
+    elif activity_type == "BonusPayment":
+        if activity_sub_type == "CASHBACK":
+            description = "Cashback reward"
+        elif activity_sub_type == "GIVEAWAY":
+            description = "Giveaway received"
+        else:
+            description = f"{activity_type} {activity_sub_type}"
+    elif activity_type == "MoneyMovement":
+        sub_desc_map = {
+            "TRANSFER": "Transfer",
+            "TRANSFER_TF": "Transfer",
+            "EFT": "Electronic funds transfer",
+            "E_TRFOUT": "e-Transfer out",
+            "E_TRFIN": "e-Transfer in",
+            "AFT_OUT": "Automated transfer out",
+            "AFT_IN": "Automated transfer in",
+            "OBP_OUT": "Online bill payment",
+            "SPEND": "Spending transaction",
+        }
+        description = sub_desc_map.get(activity_sub_type, f"{activity_type} {activity_sub_type}")
+    else:
+        description = f"{activity_type} {activity_sub_type}".strip()
+
+    return {
+        "date": date,
+        "transaction": transaction_type,
+        "description": description,
+        "amount": str(net_cash_amount),
+        "currency": currency,
+    }
+
 
 def read_config(config_file):
     """
@@ -275,41 +471,189 @@ def generate_qif_entry(row, target_currency, filename=None, cdr_symbols=None):
         raise ValueError(f"Invalid transaction type: {transaction_type}")
 
 
-def read_csv_files(input_folder, config_filename):
+def _read_monthly_statement_file(file_path, filename, account_name, cdr_symbols,
+                                  transactions_by_account, source_files_by_account):
+    """
+    Read a monthly statement CSV file and add transactions to the account dictionaries.
+
+    Args:
+        file_path (str): Full path to the CSV file.
+        filename (str): Just the filename (for error reporting and source tracking).
+        account_name (str): The extracted account name from the filename.
+        cdr_symbols (list): List of CDR symbols for symbol suffix handling.
+        transactions_by_account (dict): Dict to populate with QIF entries by account-currency.
+        source_files_by_account (dict): Dict to track source files by account-currency.
+    """
+    for target_currency in ["USD", "CAD"]:
+        per_currency_account_name = f"{account_name}-{target_currency}"
+        transactions_by_account.setdefault(per_currency_account_name, [])
+        source_files_by_account.setdefault(per_currency_account_name, set())
+        source_files_by_account[per_currency_account_name].add(filename)
+
+        with open(file_path, "r") as csv_file:
+            reader = csv.DictReader(csv_file)
+            for row in reader:
+                qif = generate_qif_entry(
+                    row, target_currency, filename, cdr_symbols
+                )
+                if qif:
+                    transactions_by_account[per_currency_account_name].append(qif)
+
+
+def _extract_activities_export_month(filename):
+    """
+    Extract the year-month from an activities export filename.
+
+    Args:
+        filename (str): The filename (e.g., 'activities-export-2026-04-24.csv').
+
+    Returns:
+        str: The year-month string (e.g., '2026-04'), or None if extraction fails.
+    """
+    pattern = r"activities-export-(\d{4}-\d{2})-\d{2}\.csv"
+    match = re.search(pattern, filename)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _get_investment_account_ids(config):
+    """
+    Extract the set of account IDs that are configured as Investment accounts.
+
+    Args:
+        config (dict): The configuration dictionary from accounts.yml.
+
+    Returns:
+        set: Set of base account IDs (without currency suffix) that are Investment type.
+    """
+    investment_ids = set()
+    for key, value in config.items():
+        if isinstance(value, dict) and value.get("type") == "Investment":
+            # Strip the currency suffix (e.g., 'H16530307CAD-USD' -> 'H16530307CAD')
+            if "-" in key:
+                base_id = key.rsplit("-", 1)[0]
+                investment_ids.add(base_id)
+            else:
+                investment_ids.add(key)
+    return investment_ids
+
+
+def _read_activities_export_file(file_path, filename, cdr_symbols, config,
+                                  transactions_by_account, source_files_by_account,
+                                  all_transactions=False, all_accounts=False):
+    """
+    Read an activities export CSV file and add transactions to the account dictionaries.
+
+    By default, the activities export format is only used for Trade transactions from
+    Investment accounts in the current (incomplete) month. The current month is
+    determined from the filename date. Completed months will be re-exported by
+    WealthSimple in the legacy monthly statement format with richer info.
+
+    Args:
+        file_path (str): Full path to the CSV file.
+        filename (str): Just the filename (for error reporting and source tracking).
+        cdr_symbols (list): List of CDR symbols for symbol suffix handling.
+        config (dict): The full configuration dictionary (used to determine Investment accounts).
+        transactions_by_account (dict): Dict to populate with QIF entries by account-currency.
+        source_files_by_account (dict): Dict to track source files by account-currency.
+        all_transactions (bool): If True, process all transaction types (not just Trade).
+        all_accounts (bool): If True, process all accounts (not just Investment).
+    """
+    # Extract the current month from the filename
+    current_month = _extract_activities_export_month(filename)
+    if current_month is None:
+        print(
+            f"WARNING: Could not extract month from activities export filename '{filename}'. "
+            f"Expected format: 'activities-export-YYYY-MM-DD.csv'"
+        )
+        return
+
+    # Get the set of investment account IDs from config
+    investment_account_ids = _get_investment_account_ids(config)
+
+    with open(file_path, "r") as csv_file:
+        reader = csv.DictReader(csv_file)
+        for row in reader:
+            account_id = (row.get("account_id") or "").strip()
+            if not account_id:
+                continue
+
+            # Only process investment accounts (unless --all-accounts is set)
+            if not all_accounts and account_id not in investment_account_ids:
+                continue
+
+            # Only process transactions from the current (incomplete) month
+            transaction_date = (row.get("transaction_date") or "").strip()
+            if not transaction_date or not transaction_date.startswith(current_month):
+                continue
+
+            # Only process Trade transactions (BUY/SELL) from activities export
+            # unless --all-transactions is set. Other transaction types
+            # (Interest, Dividend, Fee, MoneyMovement, etc.) will normally be
+            # re-exported in the legacy monthly statement format with richer info
+            if not all_transactions:
+                activity_type = (row.get("activity_type") or "").strip()
+                if activity_type != "Trade":
+                    continue
+
+            # Convert activities row to legacy format
+            legacy_row = convert_activities_row_to_legacy(row)
+            if legacy_row is None:
+                continue
+
+            currency = legacy_row["currency"]
+            if not currency:
+                continue
+
+            # Process for the matching currency only
+            for target_currency in ["USD", "CAD"]:
+                per_currency_account_name = f"{account_id}-{target_currency}"
+                transactions_by_account.setdefault(per_currency_account_name, [])
+                source_files_by_account.setdefault(per_currency_account_name, set())
+                source_files_by_account[per_currency_account_name].add(filename)
+
+            per_currency_account_name = f"{account_id}-{currency}"
+            qif = generate_qif_entry(
+                legacy_row, currency, filename, cdr_symbols
+            )
+            if qif:
+                transactions_by_account[per_currency_account_name].append(qif)
+
+
+def read_csv_files(input_folder, config_filename, all_transactions=False, all_accounts=False):
     """
     Read all CSV files from the input folder and organize transactions by account and currency.
 
-    Processes WealthSimple CSV exports and separates transactions by currency for each account.
+    Processes WealthSimple CSV exports in both the legacy monthly statement format and the
+    new activities export format. Separates transactions by currency for each account.
     Creates separate account entries for USD and CAD transactions to enable proper multi-currency
     accounting in QIF format.
 
+    Supported formats:
+        - Monthly statement: 'monthly-statement-transactions-{ACCOUNT_ID}-{DATE}.csv'
+          Account ID is extracted from the filename.
+        - Activities export: 'activities-export-{DATE}.csv'
+          Account ID is extracted from the 'account_id' column in the CSV data.
+
     Args:
         input_folder (str): Path to folder containing WealthSimple CSV files.
-                           Expected filename format: 'monthly-statement-transactions-{ACCOUNT_ID}-{DATE}.csv'
         config_filename (str): Path to YAML configuration file containing CDR symbols and account mappings.
-
-    Examples:
-        Input files:
-        - monthly-statement-transactions-AB1234567CAD-2025-07-01.csv
-        - monthly-statement-transactions-CD9876543USD-2025-06-30.csv
-
-        Output structure:
-        {
-            'AB1234567CAD-USD': [list of USD QIF entries],
-            'AB1234567CAD-CAD': [list of CAD QIF entries],
-            'CD9876543USD-USD': [list of USD QIF entries],
-            'CD9876543USD-CAD': [list of CAD QIF entries]  # May be empty
-        }
+        all_transactions (bool): If True, process all transaction types from activities export (not just Trade).
+        all_accounts (bool): If True, process all accounts from activities export (not just Investment).
 
     Returns:
-        dict: Dictionary where keys are account names with currency suffixes (e.g., 'AB1234567CAD-USD')
-              and values are lists of QIF entry strings for that account/currency combination.
+        tuple: (transactions_by_account, source_files_by_account) where:
+            - transactions_by_account (dict): Keys are account names with currency suffixes
+              (e.g., 'AB1234567CAD-USD') and values are lists of QIF entry strings.
+            - source_files_by_account (dict): Keys are account names with currency suffixes
+              and values are sets of source filenames.
 
     Note:
         - Automatically creates both USD and CAD variants for each account
         - Empty lists are created even if no transactions exist for a currency
-        - Account ID is extracted from filename using regex pattern
         - CDR symbols are loaded from config file for proper symbol suffix handling
+        - Format detection is done by examining CSV headers
     """
     # Load config to get CDR symbols
     config = read_config(config_filename)
@@ -319,7 +663,18 @@ def read_csv_files(input_folder, config_filename):
     source_files_by_account = {}
 
     for filename in os.listdir(input_folder):
-        if filename.endswith(".csv"):
+        if not filename.endswith(".csv"):
+            continue
+
+        file_path = os.path.join(input_folder, filename)
+
+        try:
+            csv_format = detect_csv_format(file_path)
+        except ValueError as e:
+            print(f"WARNING: {e}")
+            continue
+
+        if csv_format == FORMAT_MONTHLY_STATEMENT:
             account_name = extract_account_name(filename)
             if account_name is None:
                 print(
@@ -327,23 +682,17 @@ def read_csv_files(input_folder, config_filename):
                     f"filename pattern 'monthly-statement-transactions-{{ACCOUNT_NAME}}-{{DATE}}.csv'"
                 )
                 continue
-            for target_currency in ["USD", "CAD"]:
-                per_currency_account_name = f"{account_name}-{target_currency}"
-                transactions_by_account.setdefault(per_currency_account_name, [])
-                source_files_by_account.setdefault(per_currency_account_name, set())
-                source_files_by_account[per_currency_account_name].add(filename)
+            _read_monthly_statement_file(
+                file_path, filename, account_name, cdr_symbols,
+                transactions_by_account, source_files_by_account
+            )
+        elif csv_format == FORMAT_ACTIVITIES_EXPORT:
+            _read_activities_export_file(
+                file_path, filename, cdr_symbols, config,
+                transactions_by_account, source_files_by_account,
+                all_transactions=all_transactions, all_accounts=all_accounts
+            )
 
-                file_path = os.path.join(input_folder, filename)
-                with open(file_path, "r") as csv_file:
-                    reader = csv.DictReader(csv_file)
-                    for row in reader:
-                        qif = generate_qif_entry(
-                            row, target_currency, filename, cdr_symbols
-                        )
-                        if qif:
-                            transactions_by_account[per_currency_account_name].append(
-                                qif
-                            )
     return transactions_by_account, source_files_by_account
 
 
@@ -475,9 +824,24 @@ def main():
         help="Path to the config for accounts, default to `accounts.yml`",
         default="accounts.yml",
     )
+    parser.add_argument(
+        "--all-transactions",
+        action="store_true",
+        help="Process all transaction types from activities export (default: Trade only)",
+        default=False,
+    )
+    parser.add_argument(
+        "--all-accounts",
+        action="store_true",
+        help="Process all accounts from activities export (default: Investment only)",
+        default=False,
+    )
     args = parser.parse_args()
 
-    csv_data, source_files = read_csv_files(args.input_folder, args.account_config)
+    csv_data, source_files = read_csv_files(
+        args.input_folder, args.account_config,
+        all_transactions=args.all_transactions, all_accounts=args.all_accounts
+    )
     export_qif_files(csv_data, args.account_config, source_files)
 
 

@@ -6,9 +6,23 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import yaml
 
-from app.main import (export_qif_files, extract_account_name,
-                      extract_option_info, extract_symbol, extract_unit,
-                      generate_qif_entry, read_config, read_csv_files)
+from app.main import (
+    FORMAT_ACTIVITIES_EXPORT,
+    FORMAT_MONTHLY_STATEMENT,
+    _extract_activities_export_month,
+    _get_investment_account_ids,
+    convert_activities_row_to_legacy,
+    detect_csv_format,
+    export_qif_files,
+    extract_account_name,
+    extract_option_info,
+    extract_symbol,
+    extract_unit,
+    generate_qif_entry,
+    map_activities_transaction_type,
+    read_config,
+    read_csv_files,
+)
 
 
 class TestMain(unittest.TestCase):
@@ -655,9 +669,10 @@ class TestMain(unittest.TestCase):
     def test_extract_symbol_currency_case_sensitivity(self):
         """Test extract_symbol currency case sensitivity"""
         cdr_symbols = ["TSLA", "DIS", "NVDA", "AAPL"]
-        # Currency comparison is case-sensitive
+        # Currency comparison is case-sensitive - lowercase 'cad' is not 'USD',
+        # so it falls through to the CAD suffix logic where AAPL is a CDR symbol
         result = extract_symbol("AAPL - 10.0 shares", "cad", cdr_symbols)
-        self.assertEqual(result, "AAPL-CT")  # lowercase 'cad' != 'CAD'
+        self.assertEqual(result, "AAPL-QH")  # lowercase 'cad' != 'USD', so CDR suffix applies
 
         result = extract_symbol("aapl - 10.0 shares", "CAD", cdr_symbols)
         self.assertEqual(result, "AAPL-QH")  # uppercase 'CAD' matches
@@ -724,7 +739,8 @@ class TestMain(unittest.TestCase):
             "amount": "-500.00",
             "currency": "CAD",
         }
-        result = generate_qif_entry(row, "CAD")
+        cdr_symbols = ["TSLA", "DIS", "NVDA", "AAPL"]
+        result = generate_qif_entry(row, "CAD", cdr_symbols=cdr_symbols)
         expected = "D2025-07-17\nNBuy\nYTSLA-QH\nI250.0\nQ2.0\nT500.0\nO0.00\nCc\n^"
         self.assertEqual(result, expected)
 
@@ -1466,7 +1482,7 @@ WK23MTV36CAD-CAD
 
         # ACCOUNT1-USD should have 1 transaction (AAPL BUY)
         self.assertEqual(len(result["ACCOUNT1-USD"]), 1)
-        self.assertIn("AAPL-CT", result["ACCOUNT1-USD"][0])
+        self.assertIn("AAPL", result["ACCOUNT1-USD"][0])  # USD symbols have no suffix
 
         # ACCOUNT1-CAD should have 1 transaction (TSLA SELL)
         self.assertEqual(len(result["ACCOUNT1-CAD"]), 1)
@@ -1474,7 +1490,7 @@ WK23MTV36CAD-CAD
 
         # ACCOUNT2-USD should have 1 transaction (MSFT DIV)
         self.assertEqual(len(result["ACCOUNT2-USD"]), 1)
-        self.assertIn("MSFT-CT", result["ACCOUNT2-USD"][0])
+        self.assertIn("MSFT", result["ACCOUNT2-USD"][0])  # USD symbols have no suffix
 
         # ACCOUNT2-CAD should be empty
         self.assertEqual(len(result["ACCOUNT2-CAD"]), 0)
@@ -1582,9 +1598,10 @@ WK23MTV36CAD-CAD
         self.assertEqual(len(result["EMPTY123-CAD"]), 0)
 
     @patch("app.main.read_config")
+    @patch("app.main.detect_csv_format", return_value="monthly_statement")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
-    def test_read_csv_files_ignored_transactions(self, mock_open_file, mock_listdir, mock_read_config):
+    def test_read_csv_files_ignored_transactions(self, mock_open_file, mock_listdir, mock_detect, mock_read_config):
         """Test read_csv_files with transactions that should be ignored"""
         mock_listdir.return_value = [
             "monthly-statement-transactions-IGNORE123-2025-07-01.csv"
@@ -1609,13 +1626,14 @@ WK23MTV36CAD-CAD
 
         # Verify the transactions are the expected ones
         usd_transactions = result["IGNORE123-USD"]
-        self.assertIn("AAPL-CT", usd_transactions[0])
-        self.assertIn("MSFT-CT", usd_transactions[1])
+        self.assertIn("AAPL", usd_transactions[0])  # USD symbols have no suffix
+        self.assertIn("MSFT", usd_transactions[1])  # USD symbols have no suffix
 
     @patch("app.main.read_config")
+    @patch("app.main.detect_csv_format", return_value="monthly_statement")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
-    def test_read_csv_files_options_transactions(self, mock_open_file, mock_listdir, mock_read_config):
+    def test_read_csv_files_options_transactions(self, mock_open_file, mock_listdir, mock_detect, mock_read_config):
         """Test read_csv_files with options trading transactions"""
         mock_listdir.return_value = [
             "monthly-statement-transactions-OPTIONS123-2025-07-01.csv"
@@ -1640,10 +1658,11 @@ WK23MTV36CAD-CAD
         self.assertIn("AAPL 180.00 USD PUT 2025-07-30", usd_transactions[1])
 
     @patch("app.main.read_config")
+    @patch("app.main.detect_csv_format", return_value="monthly_statement")
     @patch("os.listdir")
     @patch("builtins.open", new_callable=mock_open)
     def test_read_csv_files_various_transaction_types(
-        self, mock_open_file, mock_listdir, mock_read_config
+        self, mock_open_file, mock_listdir, mock_detect, mock_read_config
     ):
         """Test read_csv_files with various transaction types"""
         mock_listdir.return_value = [
@@ -1773,8 +1792,8 @@ WK23MTV36CAD-CAD
         # SHOP in CAD should get -CT suffix (not CDR)
         self.assertIn("SHOP-CT", cad_transactions)
 
-        # TSLA in USD should get -CT suffix (not CDR when in USD)
-        self.assertIn("TSLA-CT", usd_transactions)
+        # TSLA in USD should have no suffix (USD symbols never get suffixes)
+        self.assertIn("YTSLA\n", usd_transactions)
 
     # Tests for export_qif_files function
     def test_export_qif_files_investment_account_basic(self):
@@ -2214,6 +2233,940 @@ TEST123CAD-USD:
                 # Check that account name was printed (second call)
                 second_call_args = mock_print.call_args_list[1][0]
                 self.assertEqual(second_call_args[0], "TEST123CAD-USD")
+
+
+class TestDetectCsvFormat(unittest.TestCase):
+    """Tests for detect_csv_format function"""
+
+    def test_detect_monthly_statement_format(self):
+        """Test detection of monthly statement CSV format"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+            f.write("date,transaction,description,amount,balance,currency\n")
+            f.write("2025-07-01,BUY,AAPL - 10.0 shares,-1500.00,23500.00,USD\n")
+            temp_path = f.name
+        try:
+            result = detect_csv_format(temp_path)
+            self.assertEqual(result, FORMAT_MONTHLY_STATEMENT)
+        finally:
+            os.unlink(temp_path)
+
+    def test_detect_activities_export_format(self):
+        """Test detection of activities export CSV format"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+            f.write("transaction_date,settlement_date,account_id,account_type,activity_type,activity_sub_type,direction,symbol,name,currency,quantity,unit_price,commission,net_cash_amount\n")
+            f.write("2026-02-05,,AB123CAD,Chequing,BonusPayment,CASHBACK,,,,CAD,137.5,,,137.5\n")
+            temp_path = f.name
+        try:
+            result = detect_csv_format(temp_path)
+            self.assertEqual(result, FORMAT_ACTIVITIES_EXPORT)
+        finally:
+            os.unlink(temp_path)
+
+    def test_detect_unrecognized_format(self):
+        """Test that unrecognized CSV format raises ValueError"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+            f.write("col1,col2,col3\n")
+            f.write("val1,val2,val3\n")
+            temp_path = f.name
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                detect_csv_format(temp_path)
+            self.assertIn("Unrecognized CSV format", str(ctx.exception))
+        finally:
+            os.unlink(temp_path)
+
+    def test_detect_empty_csv(self):
+        """Test that empty CSV file raises ValueError"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+            f.write("")
+            temp_path = f.name
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                detect_csv_format(temp_path)
+            self.assertIn("Empty CSV file", str(ctx.exception))
+        finally:
+            os.unlink(temp_path)
+
+
+class TestMapActivitiesTransactionType(unittest.TestCase):
+    """Tests for map_activities_transaction_type function"""
+
+    def test_trade_buy(self):
+        """Test Trade/BUY maps to BUY"""
+        self.assertEqual(map_activities_transaction_type("Trade", "BUY", -1000), "BUY")
+
+    def test_trade_sell(self):
+        """Test Trade/SELL maps to SELL"""
+        self.assertEqual(map_activities_transaction_type("Trade", "SELL", 1000), "SELL")
+
+    def test_dividend(self):
+        """Test Dividend maps to DIV"""
+        self.assertEqual(map_activities_transaction_type("Dividend", "", 50), "DIV")
+
+    def test_interest(self):
+        """Test Interest maps to INT"""
+        self.assertEqual(map_activities_transaction_type("Interest", "", 10), "INT")
+
+    def test_fee(self):
+        """Test Fee maps to FEE"""
+        self.assertEqual(map_activities_transaction_type("Fee", "", -5), "FEE")
+
+    def test_bonus_cashback(self):
+        """Test BonusPayment/CASHBACK maps to CASHBACK"""
+        self.assertEqual(map_activities_transaction_type("BonusPayment", "CASHBACK", 25), "CASHBACK")
+
+    def test_bonus_giveaway(self):
+        """Test BonusPayment/GIVEAWAY maps to GIVEAWAY"""
+        self.assertEqual(map_activities_transaction_type("BonusPayment", "GIVEAWAY", 33), "GIVEAWAY")
+
+    def test_money_movement_eft_positive(self):
+        """Test MoneyMovement/EFT with positive amount maps to EFT"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "EFT", 500), "EFT")
+
+    def test_money_movement_eft_negative(self):
+        """Test MoneyMovement/EFT with negative amount maps to EFTOUT"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "EFT", -500), "EFTOUT")
+
+    def test_money_movement_transfer_positive(self):
+        """Test MoneyMovement/TRANSFER with positive amount maps to TRFIN"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "TRANSFER", 1000), "TRFIN")
+
+    def test_money_movement_transfer_negative(self):
+        """Test MoneyMovement/TRANSFER with negative amount maps to TRFOUT"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "TRANSFER", -1000), "TRFOUT")
+
+    def test_money_movement_transfer_tf_positive(self):
+        """Test MoneyMovement/TRANSFER_TF with positive amount maps to TRFINTF"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "TRANSFER_TF", 500), "TRFINTF")
+
+    def test_money_movement_transfer_tf_negative(self):
+        """Test MoneyMovement/TRANSFER_TF with negative amount maps to TRFOUTTF"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "TRANSFER_TF", -500), "TRFOUTTF")
+
+    def test_money_movement_e_trfout(self):
+        """Test MoneyMovement/E_TRFOUT maps directly"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "E_TRFOUT", -100), "E_TRFOUT")
+
+    def test_money_movement_e_trfin(self):
+        """Test MoneyMovement/E_TRFIN maps directly"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "E_TRFIN", 100), "E_TRFIN")
+
+    def test_money_movement_aft_out(self):
+        """Test MoneyMovement/AFT_OUT maps directly"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "AFT_OUT", -200), "AFT_OUT")
+
+    def test_money_movement_aft_in(self):
+        """Test MoneyMovement/AFT_IN maps directly"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "AFT_IN", 200), "AFT_IN")
+
+    def test_money_movement_obp_out(self):
+        """Test MoneyMovement/OBP_OUT maps directly"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "OBP_OUT", -50), "OBP_OUT")
+
+    def test_money_movement_spend(self):
+        """Test MoneyMovement/SPEND maps directly"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "SPEND", -30), "SPEND")
+
+    def test_money_movement_unknown_positive(self):
+        """Test unknown MoneyMovement sub_type with positive amount falls back to TRFIN"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "UNKNOWN_SUB", 100), "TRFIN")
+
+    def test_money_movement_unknown_negative(self):
+        """Test unknown MoneyMovement sub_type with negative amount falls back to TRFOUT"""
+        self.assertEqual(map_activities_transaction_type("MoneyMovement", "UNKNOWN_SUB", -100), "TRFOUT")
+
+    def test_unknown_activity_type_with_sub(self):
+        """Test unknown activity type with sub_type returns combined string"""
+        result = map_activities_transaction_type("UnknownType", "UnknownSub", 100)
+        self.assertEqual(result, "UnknownType_UnknownSub")
+
+    def test_unknown_activity_type_without_sub(self):
+        """Test unknown activity type without sub_type returns activity_type"""
+        result = map_activities_transaction_type("UnknownType", "", 100)
+        self.assertEqual(result, "UnknownType")
+
+
+class TestConvertActivitiesRowToLegacy(unittest.TestCase):
+    """Tests for convert_activities_row_to_legacy function"""
+
+    def test_trade_buy(self):
+        """Test converting a Trade/BUY row to legacy format"""
+        row = {
+            "transaction_date": "2026-04-01",
+            "settlement_date": "2026-04-01",
+            "account_id": "AB123CAD",
+            "account_type": "Non-registered margin",
+            "activity_type": "Trade",
+            "activity_sub_type": "BUY",
+            "direction": "LONG",
+            "symbol": "XDIV",
+            "name": "iShares Core MSCI Canadian Quality",
+            "currency": "CAD",
+            "quantity": "100.5",
+            "unit_price": "39.48",
+            "commission": "0",
+            "net_cash_amount": "-3967.74",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["date"], "2026-04-01")
+        self.assertEqual(result["transaction"], "BUY")
+        self.assertEqual(result["currency"], "CAD")
+        self.assertEqual(result["amount"], "-3967.74")
+        self.assertIn("XDIV", result["description"])
+        self.assertIn("100.5", result["description"])
+        self.assertIn("shares", result["description"])
+
+    def test_trade_sell(self):
+        """Test converting a Trade/SELL row to legacy format"""
+        row = {
+            "transaction_date": "2026-02-13",
+            "settlement_date": "2026-02-13",
+            "account_id": "CD456CAD",
+            "account_type": "Non-registered margin",
+            "activity_type": "Trade",
+            "activity_sub_type": "SELL",
+            "direction": "LONG",
+            "symbol": "ZM",
+            "name": "Zoom Video Communications Inc",
+            "currency": "USD",
+            "quantity": "-80",
+            "unit_price": "90.04",
+            "commission": "0",
+            "net_cash_amount": "7203.2",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["transaction"], "SELL")
+        self.assertEqual(result["currency"], "USD")
+        self.assertIn("ZM", result["description"])
+        # Quantity in description should be absolute
+        self.assertIn("80.0", result["description"])
+
+    def test_dividend(self):
+        """Test converting a Dividend row to legacy format"""
+        row = {
+            "transaction_date": "2026-01-30",
+            "settlement_date": "",
+            "account_id": "EF789CAD",
+            "account_type": "Non-registered",
+            "activity_type": "Dividend",
+            "activity_sub_type": "",
+            "direction": "",
+            "symbol": "XDIV",
+            "name": "iShares Core MSCI Canadian Quality",
+            "currency": "CAD",
+            "quantity": "",
+            "unit_price": "",
+            "commission": "",
+            "net_cash_amount": "137.73",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["transaction"], "DIV")
+        self.assertIn("XDIV", result["description"])
+
+    def test_interest(self):
+        """Test converting an Interest row to legacy format"""
+        row = {
+            "transaction_date": "2026-02-01",
+            "settlement_date": "",
+            "account_id": "GH012CAD",
+            "account_type": "Chequing",
+            "activity_type": "Interest",
+            "activity_sub_type": "",
+            "direction": "",
+            "symbol": "",
+            "name": "",
+            "currency": "CAD",
+            "quantity": "",
+            "unit_price": "",
+            "commission": "",
+            "net_cash_amount": "34.13",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["transaction"], "INT")
+        self.assertEqual(result["description"], "Interest earned")
+        self.assertEqual(result["amount"], "34.13")
+
+    def test_fee(self):
+        """Test converting a Fee row to legacy format"""
+        row = {
+            "transaction_date": "2026-01-31",
+            "settlement_date": "",
+            "account_id": "IJ345CAD",
+            "account_type": "Non-registered",
+            "activity_type": "Fee",
+            "activity_sub_type": "",
+            "direction": "",
+            "symbol": "",
+            "name": "",
+            "currency": "CAD",
+            "quantity": "",
+            "unit_price": "",
+            "commission": "",
+            "net_cash_amount": "-8.57",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["transaction"], "FEE")
+        self.assertEqual(result["description"], "Account fee")
+
+    def test_bonus_cashback(self):
+        """Test converting a BonusPayment/CASHBACK row to legacy format"""
+        row = {
+            "transaction_date": "2026-02-05",
+            "settlement_date": "",
+            "account_id": "KL678CAD",
+            "account_type": "Chequing",
+            "activity_type": "BonusPayment",
+            "activity_sub_type": "CASHBACK",
+            "direction": "",
+            "symbol": "",
+            "name": "",
+            "currency": "CAD",
+            "quantity": "137.5",
+            "unit_price": "",
+            "commission": "",
+            "net_cash_amount": "137.5",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["transaction"], "CASHBACK")
+        self.assertEqual(result["description"], "Cashback reward")
+
+    def test_bonus_giveaway(self):
+        """Test converting a BonusPayment/GIVEAWAY row to legacy format"""
+        row = {
+            "transaction_date": "2026-01-28",
+            "settlement_date": "",
+            "account_id": "MN901CAD",
+            "account_type": "Chequing",
+            "activity_type": "BonusPayment",
+            "activity_sub_type": "GIVEAWAY",
+            "direction": "",
+            "symbol": "",
+            "name": "",
+            "currency": "CAD",
+            "quantity": "",
+            "unit_price": "",
+            "commission": "",
+            "net_cash_amount": "33.29",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["transaction"], "GIVEAWAY")
+        self.assertEqual(result["description"], "Giveaway received")
+
+    def test_money_movement_transfer_out(self):
+        """Test converting a MoneyMovement/TRANSFER with negative amount"""
+        row = {
+            "transaction_date": "2026-02-15",
+            "settlement_date": "",
+            "account_id": "OP234CAD",
+            "account_type": "Chequing",
+            "activity_type": "MoneyMovement",
+            "activity_sub_type": "TRANSFER",
+            "direction": "",
+            "symbol": "",
+            "name": "",
+            "currency": "CAD",
+            "quantity": "",
+            "unit_price": "",
+            "commission": "",
+            "net_cash_amount": "-3554.58",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["transaction"], "TRFOUT")
+
+    def test_money_movement_transfer_in(self):
+        """Test converting a MoneyMovement/TRANSFER with positive amount"""
+        row = {
+            "transaction_date": "2026-02-15",
+            "settlement_date": "",
+            "account_id": "OP234CAD",
+            "account_type": "Chequing",
+            "activity_type": "MoneyMovement",
+            "activity_sub_type": "TRANSFER",
+            "direction": "",
+            "symbol": "",
+            "name": "",
+            "currency": "CAD",
+            "quantity": "",
+            "unit_price": "",
+            "commission": "",
+            "net_cash_amount": "3554.58",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["transaction"], "TRFIN")
+
+    def test_money_movement_obp_out(self):
+        """Test converting a MoneyMovement/OBP_OUT"""
+        row = {
+            "transaction_date": "2026-02-03",
+            "settlement_date": "",
+            "account_id": "QR567CAD",
+            "account_type": "Chequing",
+            "activity_type": "MoneyMovement",
+            "activity_sub_type": "OBP_OUT",
+            "direction": "",
+            "symbol": "",
+            "name": "",
+            "currency": "CAD",
+            "quantity": "",
+            "unit_price": "",
+            "commission": "",
+            "net_cash_amount": "-5850",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["transaction"], "OBP_OUT")
+        self.assertEqual(result["description"], "Online bill payment")
+
+    def test_money_movement_spend(self):
+        """Test converting a MoneyMovement/SPEND"""
+        row = {
+            "transaction_date": "2026-04-09",
+            "settlement_date": "",
+            "account_id": "ST890CAD",
+            "account_type": "Chequing",
+            "activity_type": "MoneyMovement",
+            "activity_sub_type": "SPEND",
+            "direction": "",
+            "symbol": "",
+            "name": "",
+            "currency": "CAD",
+            "quantity": "",
+            "unit_price": "",
+            "commission": "",
+            "net_cash_amount": "-603",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["transaction"], "SPEND")
+        self.assertEqual(result["description"], "Spending transaction")
+
+    def test_empty_net_cash_amount_returns_none(self):
+        """Test that row with empty net_cash_amount returns None"""
+        row = {
+            "transaction_date": "2026-02-01",
+            "account_id": "TEST123",
+            "activity_type": "Interest",
+            "activity_sub_type": "",
+            "symbol": "",
+            "name": "",
+            "currency": "CAD",
+            "quantity": "",
+            "unit_price": "",
+            "commission": "",
+            "net_cash_amount": "",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNone(result)
+
+    def test_invalid_net_cash_amount_returns_none(self):
+        """Test that row with non-numeric net_cash_amount returns None"""
+        row = {
+            "transaction_date": "2026-02-01",
+            "account_id": "TEST123",
+            "activity_type": "Interest",
+            "activity_sub_type": "",
+            "symbol": "",
+            "name": "",
+            "currency": "CAD",
+            "quantity": "",
+            "unit_price": "",
+            "commission": "",
+            "net_cash_amount": "invalid",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNone(result)
+
+    def test_trade_with_period_in_symbol(self):
+        """Test converting a Trade row with period in symbol (e.g., DLR.U, ETHX.B)"""
+        row = {
+            "transaction_date": "2026-04-01",
+            "settlement_date": "2026-04-01",
+            "account_id": "UV123CAD",
+            "account_type": "Non-registered margin",
+            "activity_type": "Trade",
+            "activity_sub_type": "BUY",
+            "direction": "LONG",
+            "symbol": "DLR.U",
+            "name": "Global X US Dollar Currency ETF",
+            "currency": "USD",
+            "quantity": "2961.5004",
+            "unit_price": "10.13",
+            "commission": "0",
+            "net_cash_amount": "-30000",
+        }
+        result = convert_activities_row_to_legacy(row)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["transaction"], "BUY")
+        self.assertIn("DLR.U", result["description"])
+        self.assertIn("2961.5004", result["description"])
+
+
+class TestExtractActivitiesExportMonth(unittest.TestCase):
+    """Tests for _extract_activities_export_month function"""
+
+    def test_standard_filename(self):
+        self.assertEqual(_extract_activities_export_month("activities-export-2026-04-24.csv"), "2026-04")
+
+    def test_different_date(self):
+        self.assertEqual(_extract_activities_export_month("activities-export-2025-12-31.csv"), "2025-12")
+
+    def test_invalid_filename(self):
+        self.assertIsNone(_extract_activities_export_month("monthly-statement-transactions-ABC123-2026-04-01.csv"))
+
+    def test_no_date(self):
+        self.assertIsNone(_extract_activities_export_month("activities-export.csv"))
+
+
+class TestGetInvestmentAccountIds(unittest.TestCase):
+    """Tests for _get_investment_account_ids function"""
+
+    def test_mixed_accounts(self):
+        config = {
+            "cdr_symbols": ["TSLA"],
+            "H123CAD-CAD": {"nickname": "TFSA", "type": "Investment"},
+            "H123CAD-USD": {"nickname": "TFSA-USD", "type": "Investment"},
+            "WK456CAD-CAD": {"nickname": "Chequing", "type": "Checking"},
+        }
+        result = _get_investment_account_ids(config)
+        self.assertEqual(result, {"H123CAD"})
+        self.assertNotIn("WK456CAD", result)
+
+    def test_no_investment_accounts(self):
+        config = {
+            "WK456CAD-CAD": {"nickname": "Chequing", "type": "Checking"},
+        }
+        result = _get_investment_account_ids(config)
+        self.assertEqual(result, set())
+
+    def test_multiple_investment_accounts(self):
+        config = {
+            "H123CAD-CAD": {"nickname": "TFSA-CAD", "type": "Investment"},
+            "H123CAD-USD": {"nickname": "TFSA-USD", "type": "Investment"},
+            "H456CAD-CAD": {"nickname": "RRSP-CAD", "type": "Investment"},
+        }
+        result = _get_investment_account_ids(config)
+        self.assertEqual(result, {"H123CAD", "H456CAD"})
+
+
+class TestActivitiesExportIntegration(unittest.TestCase):
+    """Integration tests for activities export format with full pipeline.
+
+    Activities export files are only used for Investment accounts in the
+    current (incomplete) month. The current month is derived from the filename date.
+    """
+
+    def setUp(self):
+        """Create temp directories for input and config"""
+        self.test_dir = tempfile.mkdtemp()
+        self.input_dir = os.path.join(self.test_dir, "input")
+        os.makedirs(self.input_dir)
+
+    def tearDown(self):
+        """Clean up temp directories"""
+        shutil.rmtree(self.test_dir)
+
+    def _create_config(self, config_data):
+        """Helper to create a config file"""
+        config_path = os.path.join(self.test_dir, "accounts.yml")
+        with open(config_path, "w") as f:
+            yaml.dump(config_data, f)
+        return config_path
+
+    def _create_activities_csv(self, filename, rows):
+        """Helper to create an activities export CSV file with anonymized data"""
+        headers = "transaction_date,settlement_date,account_id,account_type,activity_type,activity_sub_type,direction,symbol,name,currency,quantity,unit_price,commission,net_cash_amount"
+        filepath = os.path.join(self.input_dir, filename)
+        with open(filepath, "w") as f:
+            f.write(headers + "\n")
+            for row in rows:
+                f.write(row + "\n")
+        return filepath
+
+    def test_activities_export_trade_buy_cad(self):
+        """Test processing a CAD stock buy from activities export"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-06,2026-04-06,TEST1CAD,Non-registered,Trade,BUY,LONG,XDIV,iShares Core MSCI Quality,CAD,8.7639,39.48,0,-346",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": ["TSLA", "DIS", "NVDA", "AAPL"],
+            "TEST1CAD-CAD": {"nickname": "Test-NonReg-CAD", "type": "Investment"},
+            "TEST1CAD-USD": {"nickname": "Test-NonReg-USD", "type": "Investment"},
+        })
+
+        result, source_files = read_csv_files(self.input_dir, config_path)
+
+        self.assertIn("TEST1CAD-CAD", result)
+        self.assertEqual(len(result["TEST1CAD-CAD"]), 1)
+        qif = result["TEST1CAD-CAD"][0]
+        self.assertIn("NBuy", qif)
+        self.assertIn("XDIV-CT", qif)
+        self.assertIn("T346.0", qif)
+
+    def test_activities_export_trade_sell_usd(self):
+        """Test processing a USD stock sell from activities export (current month only)"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-13,2026-04-13,TEST2CAD,Non-registered margin,Trade,SELL,LONG,ZM,Zoom Video,USD,-80,90.04,0,7203.2",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "TEST2CAD-CAD": {"nickname": "Test-Margin-CAD", "type": "Investment"},
+            "TEST2CAD-USD": {"nickname": "Test-Margin-USD", "type": "Investment"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        self.assertIn("TEST2CAD-USD", result)
+        self.assertEqual(len(result["TEST2CAD-USD"]), 1)
+        qif = result["TEST2CAD-USD"][0]
+        self.assertIn("NSell", qif)
+        self.assertIn("ZM", qif)
+
+    def test_activities_export_dividend_skipped(self):
+        """Test that Dividend transactions are skipped from activities export (only Trade is processed)"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-09,,TEST3CAD,Non-registered,Dividend,,,XDIV,iShares Core MSCI Quality,CAD,137.73,,,137.73",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "TEST3CAD-CAD": {"nickname": "Test-Div-CAD", "type": "Investment"},
+            "TEST3CAD-USD": {"nickname": "Test-Div-USD", "type": "Investment"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        # Dividend is not Trade, so it should be skipped
+        self.assertEqual(len(result.get("TEST3CAD-CAD", [])), 0)
+
+    def test_activities_export_non_trade_skipped(self):
+        """Test that non-Trade transactions (Interest, Dividend, Fee, etc.) are skipped from activities export"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-15,,TEST4CAD,TFSA,Interest,,,,,CAD,34.13,,,34.13",
+            "2026-04-09,,TEST4CAD,TFSA,Dividend,,,XDIV,iShares,CAD,5.00,,,5.00",
+            "2026-04-15,,TEST4CAD,TFSA,Fee,,,,,CAD,-6.8,,,-6.8",
+            "2026-04-10,,TEST4CAD,TFSA,MoneyMovement,EFT,,,,CAD,1000,,,1000",
+            "2026-04-06,2026-04-06,TEST4CAD,TFSA,Trade,BUY,LONG,XDIV,iShares,CAD,10,39.48,0,-394.8",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "TEST4CAD-CAD": {"nickname": "Test-TFSA", "type": "Investment"},
+            "TEST4CAD-USD": {"nickname": "Test-TFSA-USD", "type": "Investment"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        # Only the Trade/BUY should be processed; Interest, Dividend, Fee, MoneyMovement are skipped
+        self.assertEqual(len(result["TEST4CAD-CAD"]), 1)
+        self.assertIn("NBuy", result["TEST4CAD-CAD"][0])
+        self.assertIn("XDIV", result["TEST4CAD-CAD"][0])
+
+    def test_activities_export_checking_account_skipped(self):
+        """Test that Checking accounts are skipped from activities export"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-01,,CHKACCTCAD,Chequing,Interest,,,,,CAD,34.13,,,34.13",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "CHKACCTCAD-CAD": {"nickname": "Test-Checking", "type": "Checking"},
+            "CHKACCTCAD-USD": {"nickname": "Test-Checking-USD", "type": "Checking"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        # Checking accounts should not be processed from activities export
+        self.assertEqual(len(result.get("CHKACCTCAD-CAD", [])), 0)
+
+    def test_activities_export_old_month_skipped(self):
+        """Test that Trade transactions from previous months are skipped"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-02-01,2026-02-01,OLDMONTHCAD,TFSA,Trade,BUY,LONG,SHOP,Shopify,CAD,5,100,0,-500",
+            "2026-03-15,2026-03-15,OLDMONTHCAD,TFSA,Trade,BUY,LONG,RY,Royal Bank,CAD,10,80,0,-800",
+            "2026-04-01,2026-04-01,OLDMONTHCAD,TFSA,Trade,BUY,LONG,ENB,Enbridge,CAD,20,50,0,-1000",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "OLDMONTHCAD-CAD": {"nickname": "Test-TFSA", "type": "Investment"},
+            "OLDMONTHCAD-USD": {"nickname": "Test-TFSA-USD", "type": "Investment"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        # Only April (current month) Trade should be processed
+        self.assertEqual(len(result["OLDMONTHCAD-CAD"]), 1)
+        self.assertIn("ENB-CT", result["OLDMONTHCAD-CAD"][0])
+
+    def test_activities_export_fee_skipped(self):
+        """Test that Fee transactions are skipped from activities export (only Trade is processed)"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-15,,TEST5CAD,TFSA,Fee,,,,,CAD,-6.8,,,-6.8",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "TEST5CAD-CAD": {"nickname": "Test-TFSA-CAD", "type": "Investment"},
+            "TEST5CAD-USD": {"nickname": "Test-TFSA-USD", "type": "Investment"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        # Fee is not Trade, so it should be skipped
+        self.assertEqual(len(result.get("TEST5CAD-CAD", [])), 0)
+
+    def test_activities_export_multiple_investment_accounts_trade_only(self):
+        """Test that only Trade transactions are processed across multiple accounts"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-15,,ACCT1CAD,TFSA,Interest,,,,,CAD,25.09,,,25.09",
+            "2026-04-15,,ACCT2CAD,Non-registered,Interest,,,,,USD,56.28,,,56.28",
+            "2026-04-06,2026-04-06,ACCT3CAD,Non-registered,Trade,BUY,LONG,ENB,Enbridge Inc,CAD,177.7887,71,0,-12623",
+            "2026-04-10,2026-04-10,ACCT1CAD,TFSA,Trade,BUY,LONG,SHOP,Shopify Inc,CAD,5,120,0,-600",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "ACCT1CAD-CAD": {"nickname": "Acct1-CAD", "type": "Investment"},
+            "ACCT1CAD-USD": {"nickname": "Acct1-USD", "type": "Investment"},
+            "ACCT2CAD-CAD": {"nickname": "Acct2-CAD", "type": "Investment"},
+            "ACCT2CAD-USD": {"nickname": "Acct2-USD", "type": "Investment"},
+            "ACCT3CAD-CAD": {"nickname": "Acct3-CAD", "type": "Investment"},
+            "ACCT3CAD-USD": {"nickname": "Acct3-USD", "type": "Investment"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        # ACCT1 should have 1 Trade/BUY (Interest is skipped)
+        self.assertEqual(len(result["ACCT1CAD-CAD"]), 1)
+        self.assertIn("SHOP-CT", result["ACCT1CAD-CAD"][0])
+
+        # ACCT2 should have nothing (Interest only, no Trade)
+        self.assertEqual(len(result.get("ACCT2CAD-USD", [])), 0)
+
+        # ACCT3 should have 1 Trade/BUY
+        self.assertEqual(len(result["ACCT3CAD-CAD"]), 1)
+        self.assertIn("ENB-CT", result["ACCT3CAD-CAD"][0])
+
+    def test_activities_export_mixed_with_monthly_statement(self):
+        """Test processing both activities export and monthly statement files together.
+        Activities export only processes Trade transactions for Investment accounts in the current month.
+        Monthly statements process all accounts and transaction types as before."""
+        # Create activities export file with Trade for Investment account in current month
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-15,2026-04-15,NEWACCTCAD,TFSA,Trade,BUY,LONG,SHOP,Shopify,CAD,5,100,0,-500",
+        ])
+
+        # Create monthly statement file (processes all accounts regardless)
+        monthly_path = os.path.join(self.input_dir, "monthly-statement-transactions-OLDACCTCAD-2026-01-01.csv")
+        with open(monthly_path, "w") as f:
+            f.write("date,transaction,description,amount,balance,currency\n")
+            f.write("2026-01-01,INT,Interest earned,2.37,894.39,CAD\n")
+
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "NEWACCTCAD-CAD": {"nickname": "New-Acct-CAD", "type": "Investment"},
+            "NEWACCTCAD-USD": {"nickname": "New-Acct-USD", "type": "Investment"},
+            "OLDACCTCAD-CAD": {"nickname": "Old-Acct-CAD", "type": "Checking"},
+            "OLDACCTCAD-USD": {"nickname": "Old-Acct-USD", "type": "Checking"},
+        })
+
+        result, source_files = read_csv_files(self.input_dir, config_path)
+
+        # New account from activities export (Trade only)
+        self.assertIn("NEWACCTCAD-CAD", result)
+        self.assertEqual(len(result["NEWACCTCAD-CAD"]), 1)
+        self.assertIn("NBuy", result["NEWACCTCAD-CAD"][0])
+
+        # Old account from monthly statement (all transaction types)
+        self.assertIn("OLDACCTCAD-CAD", result)
+        self.assertEqual(len(result["OLDACCTCAD-CAD"]), 1)
+
+        # Source files tracking
+        self.assertIn("activities-export-2026-04-01.csv", source_files["NEWACCTCAD-CAD"])
+        self.assertIn("monthly-statement-transactions-OLDACCTCAD-2026-01-01.csv", source_files["OLDACCTCAD-CAD"])
+
+    def test_activities_export_cdr_symbol_trade(self):
+        """Test CDR symbol handling for activities export Trade transaction"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-09,2026-04-09,TEST6CAD,Non-registered margin,Trade,BUY,LONG,NVDA,Nvidia CDR,CAD,10,50,0,-500",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": ["TSLA", "DIS", "NVDA", "AAPL"],
+            "TEST6CAD-CAD": {"nickname": "Test-CDR-CAD", "type": "Investment"},
+            "TEST6CAD-USD": {"nickname": "Test-CDR-USD", "type": "Investment"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        self.assertEqual(len(result["TEST6CAD-CAD"]), 1)
+        qif = result["TEST6CAD-CAD"][0]
+        self.assertIn("NBuy", qif)
+        # NVDA in CAD should get -QH suffix (CDR symbol)
+        self.assertIn("NVDA-QH", qif)
+
+    def test_activities_export_money_movement_skipped(self):
+        """Test that MoneyMovement transactions are skipped from activities export (only Trade is processed)"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-01,,TEST7CAD,Non-registered,MoneyMovement,E_TRFOUT,,,,CAD,-70,,,-70",
+            "2026-04-02,,TEST7CAD,Non-registered,MoneyMovement,AFT_OUT,,,,CAD,-410.19,,,-410.19",
+            "2026-04-03,,TEST7CAD,Non-registered,MoneyMovement,AFT_IN,,,,CAD,5313.12,,,5313.12",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "TEST7CAD-CAD": {"nickname": "Test-Movement-CAD", "type": "Investment"},
+            "TEST7CAD-USD": {"nickname": "Test-Movement-USD", "type": "Investment"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        # MoneyMovement is not Trade, so all should be skipped
+        self.assertEqual(len(result.get("TEST7CAD-CAD", [])), 0)
+
+    def test_activities_export_usd_trade_only(self):
+        """Test that only Trade transactions are processed for USD Investment accounts"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-01,,TEST8CAD,Non-registered,Interest,,,,,USD,56.28,,,56.28",
+            "2026-04-12,,TEST8CAD,Non-registered,MoneyMovement,EFT,,,,USD,11103,,,11103",
+            "2026-04-06,2026-04-06,TEST8CAD,Non-registered,Trade,BUY,LONG,AAPL,Apple Inc,USD,5,200,0,-1000",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "TEST8CAD-CAD": {"nickname": "Test-NonReg-CAD", "type": "Investment"},
+            "TEST8CAD-USD": {"nickname": "Test-NonReg-USD", "type": "Investment"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        # Only Trade/BUY should be processed (Interest and MoneyMovement are skipped)
+        self.assertEqual(len(result["TEST8CAD-USD"]), 1)
+        self.assertIn("NBuy", result["TEST8CAD-USD"][0])
+        self.assertIn("AAPL", result["TEST8CAD-USD"][0])
+
+    def test_activities_export_symbol_with_period(self):
+        """Test that symbols with periods (e.g., ETHX.B, DLR.U) are handled correctly"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-06,2026-04-06,TEST9CAD,RRSP,Trade,BUY,LONG,ETHX.B,CI Galaxy Ethereum ETF,CAD,926.6135,9.1803,0,-8506.59",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "TEST9CAD-CAD": {"nickname": "Test-RRSP-CAD", "type": "Investment"},
+            "TEST9CAD-USD": {"nickname": "Test-RRSP-USD", "type": "Investment"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        self.assertEqual(len(result["TEST9CAD-CAD"]), 1)
+        qif = result["TEST9CAD-CAD"][0]
+        self.assertIn("NBuy", qif)
+        # ETHX.B should become ETHX-B-CT (period replaced with hyphen)
+        self.assertIn("ETHX-B-CT", qif)
+
+    def test_activities_export_source_files_tracking(self):
+        """Test that source files are properly tracked for activities export"""
+        self._create_activities_csv("activities-export-2026-04-24.csv", [
+            "2026-04-15,2026-04-15,SRCTEST1CAD,TFSA,Trade,BUY,LONG,SHOP,Shopify,CAD,5,100,0,-500",
+            "2026-04-15,2026-04-15,SRCTEST2CAD,RRSP,Trade,BUY,LONG,AAPL,Apple,USD,3,200,0,-600",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "SRCTEST1CAD-CAD": {"nickname": "Src1-CAD", "type": "Investment"},
+            "SRCTEST1CAD-USD": {"nickname": "Src1-USD", "type": "Investment"},
+            "SRCTEST2CAD-CAD": {"nickname": "Src2-CAD", "type": "Investment"},
+            "SRCTEST2CAD-USD": {"nickname": "Src2-USD", "type": "Investment"},
+        })
+
+        _, source_files = read_csv_files(self.input_dir, config_path)
+
+        # Both accounts should reference the activities export file
+        self.assertIn("activities-export-2026-04-24.csv", source_files["SRCTEST1CAD-CAD"])
+        self.assertIn("activities-export-2026-04-24.csv", source_files["SRCTEST2CAD-USD"])
+
+    def test_activities_export_all_transactions_flag(self):
+        """Test --all-transactions flag enables all transaction types from activities export"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-15,,ALLFLAGCAD,TFSA,Interest,,,,,CAD,34.13,,,34.13",
+            "2026-04-09,,ALLFLAGCAD,TFSA,Dividend,,,XDIV,iShares,CAD,5.00,,,5.00",
+            "2026-04-06,2026-04-06,ALLFLAGCAD,TFSA,Trade,BUY,LONG,SHOP,Shopify,CAD,5,100,0,-500",
+            "2026-04-10,,ALLFLAGCAD,TFSA,MoneyMovement,EFT,,,,CAD,1000,,,1000",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "ALLFLAGCAD-CAD": {"nickname": "AllFlag-CAD", "type": "Investment"},
+            "ALLFLAGCAD-USD": {"nickname": "AllFlag-USD", "type": "Investment"},
+        })
+
+        # Without flag: only Trade
+        result_default, _ = read_csv_files(self.input_dir, config_path)
+        self.assertEqual(len(result_default["ALLFLAGCAD-CAD"]), 1)
+
+        # With flag: all 4 transactions
+        result_all, _ = read_csv_files(self.input_dir, config_path, all_transactions=True)
+        self.assertEqual(len(result_all["ALLFLAGCAD-CAD"]), 4)
+
+    def test_activities_export_all_accounts_flag(self):
+        """Test --all-accounts flag enables all accounts from activities export"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-06,2026-04-06,INVACCTCAD,TFSA,Trade,BUY,LONG,SHOP,Shopify,CAD,5,100,0,-500",
+            "2026-04-06,2026-04-06,CHKACCTCAD,Chequing,Trade,BUY,LONG,RY,Royal Bank,CAD,10,80,0,-800",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "INVACCTCAD-CAD": {"nickname": "Inv-CAD", "type": "Investment"},
+            "INVACCTCAD-USD": {"nickname": "Inv-USD", "type": "Investment"},
+            "CHKACCTCAD-CAD": {"nickname": "Chk-CAD", "type": "Checking"},
+            "CHKACCTCAD-USD": {"nickname": "Chk-USD", "type": "Checking"},
+        })
+
+        # Without flag: only Investment
+        result_default, _ = read_csv_files(self.input_dir, config_path)
+        self.assertEqual(len(result_default.get("INVACCTCAD-CAD", [])), 1)
+        self.assertEqual(len(result_default.get("CHKACCTCAD-CAD", [])), 0)
+
+        # With flag: all accounts
+        result_all, _ = read_csv_files(self.input_dir, config_path, all_accounts=True)
+        self.assertEqual(len(result_all["INVACCTCAD-CAD"]), 1)
+        self.assertEqual(len(result_all["CHKACCTCAD-CAD"]), 1)
+
+    def test_activities_export_both_flags(self):
+        """Test both --all-transactions and --all-accounts flags together"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-15,,CHKBOTHCAD,Chequing,Interest,,,,,CAD,10.50,,,10.50",
+            "2026-04-06,2026-04-06,CHKBOTHCAD,Chequing,Trade,BUY,LONG,RY,Royal Bank,CAD,10,80,0,-800",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "CHKBOTHCAD-CAD": {"nickname": "ChkBoth-CAD", "type": "Checking"},
+            "CHKBOTHCAD-USD": {"nickname": "ChkBoth-USD", "type": "Checking"},
+        })
+
+        # Without flags: nothing (Checking + non-Trade)
+        result_default, _ = read_csv_files(self.input_dir, config_path)
+        self.assertEqual(len(result_default.get("CHKBOTHCAD-CAD", [])), 0)
+
+        # With both flags: both transactions from Checking account
+        result_all, _ = read_csv_files(self.input_dir, config_path, all_transactions=True, all_accounts=True)
+        self.assertEqual(len(result_all["CHKBOTHCAD-CAD"]), 2)
+
+    def test_activities_export_empty_trade_rows_skipped(self):
+        """Test that Trade rows with empty amounts are skipped"""
+        self._create_activities_csv("activities-export-2026-04-01.csv", [
+            "2026-04-01,2026-04-01,EMPTY1CAD,TFSA,Trade,BUY,LONG,SHOP,Shopify,CAD,5,100,0,-500",
+            "2026-04-02,2026-04-02,EMPTY1CAD,TFSA,Trade,BUY,LONG,RY,Royal Bank,CAD,,,,",
+        ])
+        config_path = self._create_config({
+            "cdr_symbols": [],
+            "EMPTY1CAD-CAD": {"nickname": "Empty-Test-CAD", "type": "Investment"},
+            "EMPTY1CAD-USD": {"nickname": "Empty-Test-USD", "type": "Investment"},
+        })
+
+        result, _ = read_csv_files(self.input_dir, config_path)
+
+        # Only the first Trade row should be processed (second has empty amount)
+        self.assertEqual(len(result["EMPTY1CAD-CAD"]), 1)
+        self.assertIn("SHOP-CT", result["EMPTY1CAD-CAD"][0])
 
 
 if __name__ == "__main__":
